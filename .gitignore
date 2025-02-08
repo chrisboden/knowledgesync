@@ -3,10 +3,6 @@
 credentials.json
 token.pickle
 
-# Synchronized content
-docs/
-gdocs/
-
 # Logs
 *.log
 sync.error.log
