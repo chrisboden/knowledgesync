@@ -172,7 +172,7 @@ Metadata is only generated when:
 ├── requirements.txt                     # Python dependencies
 ├── sync_docs.sh                         # Sync automation script
 ├── com.gdocs-sync.service.plist         # macOS launch daemon config
-└── docs/                                # Synchronized documents (gitignored)
+└── gdocs/                                # Synchronized documents (gitignored)
     ├── @manifest.json                   # Metadata tracking manifest
     ├── document1.md                     # Synchronized markdown files
     ├── document2.md
