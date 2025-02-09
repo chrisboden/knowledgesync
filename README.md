@@ -1,9 +1,8 @@
 # Google Workspace to Local Sync Utility
 
 This utility automatically synchronizes Google Docs and Sheets from a specified Google Drive folder to local files:
-- Google Docs are converted to Markdown files
-- Google Sheets are converted to CSV files
-- Includes AI-powered metadata extraction for documents
+- Google Docs are converted to Markdown files with rich metadata
+- Google Sheets are converted to CSV files with rich metadata
 - Uses async processing for efficient metadata generation
 - Handles image references cleanly
 
@@ -75,50 +74,18 @@ python main.py
    launchctl load ~/Library/LaunchAgents/com.gdocs-sync.service.plist
    ```
 
-The utility will:
-- Authenticate with Google Drive through the following process:
-  1. First, set up credentials:
-     - Download `credentials.json` from Google Cloud Console
-     - Place it in the project root directory
-     - Note: This file contains sensitive data and is gitignored
-     - Use `credentials_example.json` as a template for required format
-  
-  2. On first run:
-     - A browser window will open automatically
-     - Select your Google account
-     - You may see a warning that the app is not verified - this is expected for development
-     - Click "Continue" (or "Advanced" > "Go to [Project Name]" if warned)
-     - Review and accept the requested permissions:
-       • Read access to Google Drive files
-       • View and manage Google Drive files that you have opened/created
-     - After accepting, you can close the browser window
-     - The utility will save the authentication token locally for future use
-
-Note: If you're not already added as a test user:
-1. Go to Google Cloud Console > "OAuth consent screen"
-2. Under "Test users" click "Add Users" 
-3. Enter your Google account email
-4. Click "Save"
-5. Wait 5-10 minutes for changes to propagate
-6. Try authenticating again
-
-Important: Never commit `credentials.json` to version control. Instead:
-- Use the provided `credentials_example.json` as a template
-- Copy it to `credentials.json`
-- Fill in your actual credentials from Google Cloud Console
-
 ## Features
 
 - Automatic sync of Google Workspace files:
   - Google Docs to Markdown
   - Google Sheets to CSV (one CSV per worksheet)
 - Delta updates (only syncs changed files)
-- Efficient metadata management for documents:
+- Rich metadata generation:
+  - AI-powered metadata extraction for both documents and spreadsheets
   - Only generates metadata for new or modified files
   - Parallel processing using async API calls
-  - Maintains metadata manifest for quick lookups
+  - Maintains metadata manifests for quick lookups
 - Clean image handling (references without base64 data)
-- AI-powered metadata extraction using OpenRouter
 - Colored progress output
 - Error handling and logging
 - Secure OAuth2 authentication
@@ -133,9 +100,15 @@ Important: Never commit `credentials.json` to version control. Instead:
 ├── README.md                            # Project documentation
 ├── credentials_example.json             # Rename to credentials.json and add your values
 ├── main.py                              # Main sync script
-├── drive_ops.py                         # Google Drive operations
-├── sheets_ops.py                        # Google Sheets operations
-├── metadata_ops.py                      # Metadata extraction operations
+├── utils/                               # Utility modules
+│   ├── __init__.py                     # Module exports
+│   ├── google_drive_ops.py             # Google Drive operations
+│   ├── google_sheets_ops.py            # Google Sheets operations
+│   ├── document_metadata_ops.py        # Document metadata operations
+│   └── spreadsheet_metadata_ops.py     # Spreadsheet metadata operations
+├── prompts/                             # AI prompt templates
+│   ├── extract_document_metadata.md     # Document metadata extraction prompt
+│   └── extract_spreadsheet_metadata.md  # Spreadsheet metadata extraction prompt
 ├── requirements.txt                     # Python dependencies
 ├── sync_docs.sh                         # Sync automation script
 ├── com.gdocs-sync.service.plist         # macOS launch daemon config
@@ -145,6 +118,7 @@ Important: Never commit `credentials.json` to version control. Instead:
     │   ├── document1.md                # Converted Google Docs
     │   └── document2.md
     └── spreadsheets/                   # Synchronized CSV files
+        ├── @manifest.json              # Spreadsheet metadata manifest
         ├── spreadsheet1/               # Each spreadsheet gets its own directory
         │   ├── Sheet1.csv             # One CSV per worksheet
         │   └── Sheet2.csv
@@ -154,17 +128,25 @@ Important: Never commit `credentials.json` to version control. Instead:
 
 ## Metadata Management
 
-The utility maintains a `@manifest.json` file in your documents directory that tracks:
-- Document metadata (summaries, topics, sections)
-- Last update timestamps
-- Processing status
+The utility maintains two manifest files:
+1. `documents/@manifest.json` - Document metadata including:
+   - Document summaries
+   - Topics and categories
+   - Document sections
+   - Last update timestamps
+   - Processing status
 
-Metadata is only generated for documents when:
-- A new document is added
-- An existing document is modified
-- A document's metadata is missing or incomplete
+2. `spreadsheets/@manifest.json` - Spreadsheet metadata including:
+   - Spreadsheet purpose and content
+   - Data types and relationships
+   - Worksheet descriptions
+   - Last update timestamps
+   - Processing status
 
-Note: Spreadsheet files are stored as raw CSV without additional metadata.
+Metadata is only generated when:
+- A new file is added
+- An existing file is modified
+- A file's metadata is missing or incomplete
 
 ## Monitoring
 
@@ -194,83 +176,5 @@ Note: Spreadsheet files are stored as raw CSV without additional metadata.
 
 4. If metadata extraction fails:
    - Check OpenRouter API key and base URL in `.env`
-   - Verify the document content is accessible
-   - Look for token limit warnings in the logs 
-
-## Project Structure
-
-```
-.
-├── .env_example                         # Rename to .env and add your own values
-├── .gitignore                           # Git ignore rules
-├── README.md                            # Project documentation
-├── credentials_example.json             # Rename to credentials.json and add the values from Google Cloud Console
-├── main.py                              # Main sync script
-├── drive_ops.py                         # Google Drive operations
-├── sheets_ops.py                        # Google Sheets operations
-├── metadata_ops.py                      # Metadata extraction operations
-├── requirements.txt                     # Python dependencies
-├── sync_docs.sh                         # Sync automation script
-├── com.gdocs-sync.service.plist         # macOS launch daemon config
-└── destination_folder/                  # Your configured sync destination
-    ├── documents/                       # Synchronized markdown documents
-    │   ├── @manifest.json              # Document metadata manifest
-    │   ├── document1.md                # Converted Google Docs
-    │   └── document2.md
-    └── spreadsheets/                   # Synchronized CSV files
-        ├── spreadsheet1/               # Each spreadsheet gets its own directory
-        │   ├── Sheet1.csv             # One CSV per worksheet
-        │   └── Sheet2.csv
-        └── spreadsheet2/
-            └── Sheet1.csv
-```
-
-### Manifest File Structure
-
-The `@manifest.json` in your documents directory maintains the sync state and metadata:
-
-```json
-[
-    {
-        "id": "AI-Career-Accelerator-March2025",
-        "title": "AI Career Accelerator",
-        "last_modified": "2024-03-20T10:30:00Z",
-        "last_synced": "2024-03-20T10:35:00Z",
-        "metadata": {
-            "summary": "The AI Career Accelerator is a 3-week cohort-based course designed to help tech professionals master AI tools, build real projects, and supercharge their career growth. It focuses on understanding durable human skills, applying AI models, and developing a career plan for the AI age, with hands-on experience, skill assessment, and real-world applications.",
-            "wordCount": 1450,
-            "source": "Markdown Document",
-            "language": "en",
-            "primaryTopics": [
-                "Artificial Intelligence",
-                "Career Development",
-                "Technology Training",
-                "Professional Skills"
-            ],
-            "questionTypes": [
-                "how-to",
-                "what",
-                "why",
-                "career advice"
-            ],
-            "useCases": [
-                "career advancement",
-                "skill development",
-                "technology adoption",
-                "training programs"
-            ],
-            "audience": "Tech professionals, product managers, engineers, data scientists, tech leaders, founders, career changers",
-            "documentSections": [
-                {
-                    "sectionTitle": "Course Overview",
-                    "summary": "Introduces the AI Career Accelerator, highlighting the importance of AI skills, the challenge of keeping up with AI advancements, and the course's focus on durable human skills and AI integration."
-                },
-                // ... other sections ...
-            ],
-            "about": "This document is a course overview for the 'AI Career Accelerator,' designed to equip tech professionals with the skills and knowledge necessary to thrive in an AI-driven world. It details the course objectives, target audience, curriculum, and expected outcomes, emphasizing practical AI applications and career planning."
-        }
-    },
-    // ... other documents ...
-]
-```
-Note: The `destination_folder/` directory and its contents are gitignored since they contain your synchronized content. The structure above shows an example of how files are organized after syncing. 
+   - Verify the file content is accessible
+   - Look for token limit warnings in the logs
