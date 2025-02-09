@@ -1,5 +1,5 @@
 """
-Metadata operations for document analysis and manifest management.
+Metadata operations for markdown document analysis and manifest management.
 """
 import json
 import os
@@ -13,12 +13,12 @@ import pytz
 import glob
 import hashlib
 
-class MetadataOperations:
-    def __init__(self, gdocs_dir: str):
-        """Initialize metadata operations."""
-        self.gdocs_dir = Path(gdocs_dir)
-        self.manifest_path = self.gdocs_dir / "@manifest.json"  # Store manifest in gdocs directory
-        self.prompt_template_path = Path("prompts/extract_metadata.md")
+class MarkdownMetadataOperations:
+    def __init__(self, base_dir: str):
+        """Initialize metadata operations for markdown documents."""
+        self.base_dir = Path(base_dir)
+        self.manifest_path = self.base_dir / "@manifest.json"
+        self.prompt_template_path = Path("prompts/extract_markdown_metadata.md")
         
         # Load environment variables
         load_dotenv()
@@ -104,7 +104,7 @@ class MetadataOperations:
                 "id": f"doc_{hash(file_path.name)}",
                 "title": file_path.stem,
                 "fileName": file_path.name,
-                "localPath": str(self.gdocs_dir),  # Use actual gdocs directory
+                "localPath": str(self.base_dir),  # Use actual base directory
                 "createdAt": datetime.fromtimestamp(file_path.stat().st_ctime).isoformat(),
                 "updatedAt": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
                 "summary": "",
@@ -162,7 +162,7 @@ class MetadataOperations:
         """Update the manifest with metadata for all files."""
         print(colored("\nUpdating document metadata...", "cyan"))
         
-        md_files = list(self.gdocs_dir.glob("*.md"))
+        md_files = list(self.base_dir.glob("*.md"))
         print(colored(f"Found {len(md_files)} markdown files", "cyan"))
         
         # Clean up manifest entries with incorrect double .md extensions
@@ -275,7 +275,7 @@ class MetadataOperations:
 
     def _cleanup_double_extensions(self):
         """Clean up any files with double .md extensions."""
-        for file_path in self.gdocs_dir.glob("*.md.md"):
+        for file_path in self.base_dir.glob("*.md.md"):
             try:
                 correct_path = file_path.with_name(file_path.stem)  # Removes one .md
                 file_path.rename(correct_path)

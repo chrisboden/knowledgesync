@@ -9,14 +9,21 @@ from googleapiclient.errors import HttpError
 import os
 import pickle
 import re
+from pathlib import Path
 from termcolor import colored
 
 # If modifying these scopes, delete the token.pickle file.
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+SCOPES = [
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/spreadsheets.readonly'
+]
 
 class DriveOperations:
-    def __init__(self):
+    def __init__(self, base_dir: str):
         """Initialize the Drive API client."""
+        self.base_dir = Path(base_dir)
+        self.docs_dir = self.base_dir / "documents"
+        self.docs_dir.mkdir(parents=True, exist_ok=True)
         self.creds = None
         self.service = None
         
@@ -123,4 +130,8 @@ class DriveOperations:
             ).execute()
         except HttpError as e:
             print(colored(f"✗ Error getting file metadata: {str(e)}", "red"))
-            return None 
+            return None
+
+    def get_credentials(self):
+        """Return the credentials for use by other services."""
+        return self.creds 

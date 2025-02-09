@@ -1,5 +1,5 @@
 """
-Main application for Google Docs to Markdown sync utility.
+Main application for Google Docs/Sheets to Markdown/CSV sync utility.
 """
 import os
 import sys
@@ -8,14 +8,16 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from termcolor import colored
-from drive_ops import DriveOperations
-from metadata_ops import MetadataOperations
+from utils.drive_ops import DriveOperations
+from utils.sheets_ops import SheetsOperations
+from utils.markdown_metadata_ops import MarkdownMetadataOperations
+from utils.spreadsheet_metadata_ops import SpreadsheetMetadataOperations
 import pytz
 import json
 
 def setup():
     """Initialize the application and check requirements."""
-    print(colored("Starting Google Docs to Markdown sync...", "cyan"))
+    print(colored("Starting Google Workspace sync...", "cyan"))
     
     # Load environment variables
     load_dotenv()
@@ -39,65 +41,28 @@ def setup():
     dest_path = Path(dest_folder)
     dest_path.mkdir(parents=True, exist_ok=True)
     
+    # Create subdirectories
+    (dest_path / "documents").mkdir(exist_ok=True)
+    (dest_path / "spreadsheets").mkdir(exist_ok=True)
+    
     return source_folder_id, dest_path
 
-def get_local_file_info(dest_path):
+def get_local_file_info(directory: Path, pattern: str = "*.md"):
     """Get information about existing local files."""
     local_files = {}
-    for md_file in dest_path.glob('*.md'):
-        # Convert local timestamp to UTC for comparison
-        timestamp = datetime.fromtimestamp(md_file.stat().st_mtime)
-        utc_time = timestamp.astimezone(pytz.UTC)
-        local_files[md_file.stem] = utc_time
+    for file_path in directory.glob(pattern):
+        mtime = datetime.fromtimestamp(
+            file_path.stat().st_mtime,
+            tz=pytz.UTC
+        )
+        local_files[file_path.stem] = mtime
     return local_files
 
-def check_manifest_status(dest_path):
-    """Check if manifest exists and contains entries for all files."""
-    manifest_path = dest_path / "@manifest.json"  # Look for manifest in gdocs directory
-    try:
-        if not manifest_path.exists():
-            print(colored("! No manifest found - will create new one", "yellow"))
-            return True  # Need to create manifest
-            
-        manifest_data = json.loads(manifest_path.read_text())
-        manifest_files = {item["fileName"] for item in manifest_data}
-        
-        # Get all current markdown files
-        current_files = {f.name for f in dest_path.glob("*.md")}
-        
-        # Check for missing files
-        missing_files = current_files - manifest_files
-        if missing_files:
-            print(colored(f"! Found {len(missing_files)} files not in manifest:", "yellow"))
-            for file in missing_files:
-                print(colored(f"  - {file}", "yellow"))
-            return True
-            
-        # Check for removed files
-        removed_files = manifest_files - current_files
-        if removed_files:
-            print(colored(f"! Found {len(removed_files)} files in manifest that no longer exist:", "yellow"))
-            for file in removed_files:
-                print(colored(f"  - {file}", "yellow"))
-            return True
-        
-        return False
-        
-    except json.JSONDecodeError:
-        print(colored("! Invalid manifest JSON - will recreate", "yellow"))
-        return True  # Invalid manifest, need to recreate
-    except Exception as e:
-        print(colored(f"! Error checking manifest: {str(e)}", "yellow"))
-        return True  # Any other error, recreate manifest
-
-async def sync_docs(drive_ops, source_folder_id: str, dest_path: str):
+async def sync_docs(drive_ops, source_folder_id: str, dest_path: Path):
     """Sync Google Docs to local markdown files."""
-    print("Starting Google Docs to Markdown sync...")
+    print("\nSyncing Google Docs...")
     
     try:
-        # Convert dest_path to Path object if it isn't already
-        dest_path = Path(dest_path)
-        
         # Get list of docs in the source folder
         docs = drive_ops.list_docs_in_folder(source_folder_id)
         if not docs:
@@ -105,11 +70,11 @@ async def sync_docs(drive_ops, source_folder_id: str, dest_path: str):
             return
         
         # Get info about existing local files
-        local_files = get_local_file_info(dest_path)
+        local_files = get_local_file_info(dest_path / "documents")
         
         # Track sync statistics
         stats = {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'removed': 0}
-        updated_files = []  # Track which files were created or updated
+        updated_files = []
         
         # Create set of current Google Doc names for checking deletions
         gdrive_doc_names = {doc['name'] for doc in docs}
@@ -117,7 +82,7 @@ async def sync_docs(drive_ops, source_folder_id: str, dest_path: str):
         # Check for files that need to be removed
         for local_file_name in local_files.keys():
             if local_file_name not in gdrive_doc_names:
-                local_file_path = dest_path / f"{local_file_name}.md"
+                local_file_path = dest_path / "documents" / f"{local_file_name}.md"
                 try:
                     local_file_path.unlink()
                     print(colored(f"- Removed {local_file_name}.md (deleted from Google Drive)", "yellow"))
@@ -129,16 +94,14 @@ async def sync_docs(drive_ops, source_folder_id: str, dest_path: str):
         # Process each document
         for doc in docs:
             try:
-                # Clean up the filename to prevent double .md extension
+                # Clean up the filename
                 base_name = doc['name']
-                # Remove .md extension if it exists in the Google Doc name
                 if base_name.lower().endswith('.md'):
                     base_name = base_name[:-3]
-                # Add .md extension for local file
                 local_filename = f"{base_name}.md"
                 
                 # Create Path object for local file
-                local_path = dest_path / local_filename
+                local_path = dest_path / "documents" / local_filename
                 
                 # Check if we need to update this file
                 needs_update = True
@@ -171,27 +134,110 @@ async def sync_docs(drive_ops, source_folder_id: str, dest_path: str):
                 print(colored(f"✗ Error processing {doc['name']}: {str(e)}", "red"))
                 stats['failed'] += 1
         
-        # Print sync summary
-        print("\nSync Summary:")
-        print(colored(f"Created: {stats['created']}", "green"))
-        print(colored(f"Updated: {stats['updated']}", "green"))
-        print(colored(f"Removed: {stats['removed']}", "yellow"))
-        print(colored(f"Skipped: {stats['skipped']}", "cyan"))
-        print(colored(f"Failed: {stats['failed']}", "red"))
-        
-        # Check if we need to update metadata
-        needs_metadata_update = bool(updated_files) or bool(stats['removed']) or check_manifest_status(dest_path)
-        
-        if needs_metadata_update:
-            print("\nUpdating document metadata...")
-            metadata_ops = MetadataOperations(dest_path)
-            await metadata_ops.update_manifest()
-        else:
-            print(colored("\nMetadata is up to date", "green"))
+        return stats, updated_files
         
     except Exception as e:
-        print(colored(f"✗ Sync failed: {str(e)}", "red"))
-        sys.exit(1)
+        print(colored(f"✗ Docs sync failed: {str(e)}", "red"))
+        return {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 1, 'removed': 0}, []
+
+async def sync_sheets(sheets_ops, source_folder_id: str, dest_path: Path):
+    """Sync Google Sheets to local CSV files."""
+    print("\nSyncing Google Sheets...")
+    
+    try:
+        # Get list of sheets in the source folder
+        sheets = sheets_ops.list_sheets_in_folder(source_folder_id)
+        if not sheets:
+            print(colored("No spreadsheets found to sync", "yellow"))
+            return {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'removed': 0}, []
+        
+        stats = {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'removed': 0}
+        updated_files = []
+        
+        # Process each spreadsheet
+        for sheet in sheets:
+            try:
+                # Get metadata about the spreadsheet
+                metadata = sheets_ops.get_sheet_metadata(sheet['id'])
+                if not metadata:
+                    print(colored(f"✗ Failed to get metadata for {sheet['name']}", "red"))
+                    stats['failed'] += 1
+                    continue
+                
+                # Create directory for this spreadsheet
+                sheet_dir = dest_path / "spreadsheets" / metadata['title']
+                sheet_dir.mkdir(exist_ok=True)
+                
+                # Process each worksheet
+                for worksheet in metadata['sheets']:
+                    worksheet_name = worksheet['name']
+                    csv_path = sheet_dir / f"{worksheet_name}.csv"
+                    
+                    # Check if we need to update this worksheet
+                    needs_update = True
+                    if csv_path.exists():
+                        local_mtime = datetime.fromtimestamp(
+                            csv_path.stat().st_mtime,
+                            tz=pytz.UTC
+                        )
+                        sheet_mtime = datetime.fromisoformat(sheet['modifiedTime'].replace('Z', '+00:00'))
+                        if local_mtime >= sheet_mtime:
+                            print(colored(f"↷ Skipping {metadata['title']}/{worksheet_name}.csv (up to date)", "cyan"))
+                            stats['skipped'] += 1
+                            needs_update = False
+                    
+                    if needs_update:
+                        # Export the worksheet to CSV
+                        sheet_data = sheets_ops.export_sheet_to_csv(sheet['id'], worksheet_name)
+                        if sheet_data:
+                            # Save the CSV file
+                            csv_file = sheets_ops.save_sheet_as_csv(
+                                sheet['id'],
+                                metadata,
+                                sheet_data,
+                                worksheet_name
+                            )
+                            if csv_file:
+                                updated_files.append(Path(csv_file))
+                                if csv_path.exists():
+                                    print(colored(f"↻ Updated {metadata['title']}/{worksheet_name}.csv", "green"))
+                                    stats['updated'] += 1
+                                else:
+                                    print(colored(f"+ Created {metadata['title']}/{worksheet_name}.csv", "green"))
+                                    stats['created'] += 1
+                            else:
+                                print(colored(f"✗ Failed to save {worksheet_name}.csv", "red"))
+                                stats['failed'] += 1
+                        else:
+                            print(colored(f"✗ Failed to export {worksheet_name}", "red"))
+                            stats['failed'] += 1
+                            
+            except Exception as e:
+                print(colored(f"✗ Error processing {sheet['name']}: {str(e)}", "red"))
+                stats['failed'] += 1
+        
+        return stats, updated_files
+        
+    except Exception as e:
+        print(colored(f"✗ Sheets sync failed: {str(e)}", "red"))
+        return {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 1, 'removed': 0}, []
+
+def print_sync_summary(doc_stats, sheet_stats):
+    """Print a summary of the sync operation."""
+    print("\nSync Summary:")
+    print("\nDocuments:")
+    print(colored(f"Created: {doc_stats['created']}", "green"))
+    print(colored(f"Updated: {doc_stats['updated']}", "green"))
+    print(colored(f"Removed: {doc_stats['removed']}", "yellow"))
+    print(colored(f"Skipped: {doc_stats['skipped']}", "cyan"))
+    print(colored(f"Failed: {doc_stats['failed']}", "red"))
+    
+    print("\nSpreadsheets:")
+    print(colored(f"Created: {sheet_stats['created']}", "green"))
+    print(colored(f"Updated: {sheet_stats['updated']}", "green"))
+    print(colored(f"Removed: {sheet_stats['removed']}", "yellow"))
+    print(colored(f"Skipped: {sheet_stats['skipped']}", "cyan"))
+    print(colored(f"Failed: {sheet_stats['failed']}", "red"))
 
 async def main():
     """Main entry point."""
@@ -200,12 +246,46 @@ async def main():
         source_folder_id, dest_path = setup()
         
         # Initialize Drive operations
-        drive_ops = DriveOperations()
+        drive_ops = DriveOperations(dest_path)
         if not drive_ops.authenticate():
             sys.exit(1)
         
-        # Perform sync
-        await sync_docs(drive_ops, source_folder_id, dest_path)
+        # Initialize Sheets operations with same credentials
+        sheets_ops = SheetsOperations(dest_path)
+        if not sheets_ops.authenticate(drive_ops.get_credentials()):
+            sys.exit(1)
+        
+        # Perform syncs
+        doc_stats, doc_updated_files = await sync_docs(drive_ops, source_folder_id, dest_path)
+        sheet_stats, sheet_updated_files = await sync_sheets(sheets_ops, source_folder_id, dest_path)
+        
+        # Print overall summary
+        print_sync_summary(doc_stats, sheet_stats)
+        
+        # Check if we need to update metadata for documents
+        if doc_updated_files or doc_stats['removed']:
+            print("\nUpdating document metadata...")
+            metadata_ops = MarkdownMetadataOperations(dest_path / "documents")
+            await metadata_ops.update_manifest()
+        else:
+            print(colored("\nDocument metadata is up to date", "green"))
+        
+        # Check if we need to update metadata for spreadsheets
+        spreadsheet_metadata_ops = SpreadsheetMetadataOperations(dest_path)
+        manifest_path = dest_path / "spreadsheets" / "@manifest.json"
+        needs_metadata_update = (
+            sheet_updated_files or 
+            sheet_stats['removed'] or 
+            not manifest_path.exists() or
+            manifest_path.stat().st_size == 0 or
+            len(json.loads(manifest_path.read_text() if manifest_path.exists() else "[]")) == 0
+        )
+        
+        if needs_metadata_update:
+            print("\nUpdating spreadsheet metadata...")
+            await spreadsheet_metadata_ops.update_manifest()
+        else:
+            print(colored("\nSpreadsheet metadata is up to date", "green"))
         
     except KeyboardInterrupt:
         print(colored("\n\nSync interrupted by user", "yellow"))
@@ -214,5 +294,5 @@ async def main():
         print(colored(f"\n✗ Unexpected error: {str(e)}", "red"))
         sys.exit(1)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main()) 

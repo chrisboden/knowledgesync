@@ -1,6 +1,11 @@
-# Google Docs to Markdown Sync Utility
+# Google Workspace to Local Sync Utility
 
-This utility automatically synchronizes Google Docs from a specified Google Drive folder to local Markdown files, with AI-powered metadata extraction. It uses async processing for efficient metadata generation and handles image references cleanly.
+This utility automatically synchronizes Google Docs and Sheets from a specified Google Drive folder to local files:
+- Google Docs are converted to Markdown files
+- Google Sheets are converted to CSV files
+- Includes AI-powered metadata extraction for documents
+- Uses async processing for efficient metadata generation
+- Handles image references cleanly
 
 ## Setup
 
@@ -10,13 +15,14 @@ This utility automatically synchronizes Google Docs from a specified Google Driv
    pip install -r requirements.txt
    ```
 
-3. Set up Google Cloud Project and Drive API:
+3. Set up Google Cloud Project and APIs:
    1. Go to [Google Cloud Console](https://console.cloud.google.com/)
    2. Create a new project (or select an existing one)
-   3. Enable the Google Drive API:
+   3. Enable the required APIs:
       - Go to "APIs & Services" > "Library"
-      - Search for "Google Drive API"
-      - Click "Enable"
+      - Enable "Google Drive API"
+      - Enable "Google Sheets API"
+      - Click "Enable" for each
    4. Configure OAuth consent screen:
       - Go to "APIs & Services" > "OAuth consent screen"
       - Select "External" user type
@@ -37,7 +43,7 @@ This utility automatically synchronizes Google Docs from a specified Google Driv
    # Folder ID would be: 1234567890abcdef
    SOURCE_FOLDER_ID=your_google_drive_folder_id
 
-   # Local destination folder for Markdown files
+   # Local destination folder for synced files
    # Use absolute path for best results
    DESTINATION_FOLDER=path/to/local/folder
 
@@ -103,9 +109,11 @@ Important: Never commit `credentials.json` to version control. Instead:
 
 ## Features
 
-- Automatic sync of Google Docs to Markdown
+- Automatic sync of Google Workspace files:
+  - Google Docs to Markdown
+  - Google Sheets to CSV (one CSV per worksheet)
 - Delta updates (only syncs changed files)
-- Efficient metadata management:
+- Efficient metadata management for documents:
   - Only generates metadata for new or modified files
   - Parallel processing using async API calls
   - Maintains metadata manifest for quick lookups
@@ -116,17 +124,47 @@ Important: Never commit `credentials.json` to version control. Instead:
 - Secure OAuth2 authentication
 - Automated scheduling via launchd (macOS)
 
+## Directory Structure
+
+```
+.
+├── .env_example                         # Rename to .env and add your own values
+├── .gitignore                           # Git ignore rules
+├── README.md                            # Project documentation
+├── credentials_example.json             # Rename to credentials.json and add your values
+├── main.py                              # Main sync script
+├── drive_ops.py                         # Google Drive operations
+├── sheets_ops.py                        # Google Sheets operations
+├── metadata_ops.py                      # Metadata extraction operations
+├── requirements.txt                     # Python dependencies
+├── sync_docs.sh                         # Sync automation script
+├── com.gdocs-sync.service.plist         # macOS launch daemon config
+└── destination_folder/                  # Your configured sync destination
+    ├── documents/                       # Synchronized markdown documents
+    │   ├── @manifest.json              # Document metadata manifest
+    │   ├── document1.md                # Converted Google Docs
+    │   └── document2.md
+    └── spreadsheets/                   # Synchronized CSV files
+        ├── spreadsheet1/               # Each spreadsheet gets its own directory
+        │   ├── Sheet1.csv             # One CSV per worksheet
+        │   └── Sheet2.csv
+        └── spreadsheet2/
+            └── Sheet1.csv
+```
+
 ## Metadata Management
 
-The utility maintains a `@manifest.json` file in your docs directory that tracks:
+The utility maintains a `@manifest.json` file in your documents directory that tracks:
 - Document metadata (summaries, topics, sections)
 - Last update timestamps
 - Processing status
 
-Metadata is only generated when:
+Metadata is only generated for documents when:
 - A new document is added
 - An existing document is modified
 - A document's metadata is missing or incomplete
+
+Note: Spreadsheet files are stored as raw CSV without additional metadata.
 
 ## Monitoring
 
@@ -168,20 +206,28 @@ Metadata is only generated when:
 ├── README.md                            # Project documentation
 ├── credentials_example.json             # Rename to credentials.json and add the values from Google Cloud Console
 ├── main.py                              # Main sync script
+├── drive_ops.py                         # Google Drive operations
+├── sheets_ops.py                        # Google Sheets operations
 ├── metadata_ops.py                      # Metadata extraction operations
 ├── requirements.txt                     # Python dependencies
 ├── sync_docs.sh                         # Sync automation script
 ├── com.gdocs-sync.service.plist         # macOS launch daemon config
-└── gdocs/                                # Synchronized documents (gitignored)
-    ├── @manifest.json                   # Metadata tracking manifest
-    ├── document1.md                     # Synchronized markdown files
-    ├── document2.md
-
+└── destination_folder/                  # Your configured sync destination
+    ├── documents/                       # Synchronized markdown documents
+    │   ├── @manifest.json              # Document metadata manifest
+    │   ├── document1.md                # Converted Google Docs
+    │   └── document2.md
+    └── spreadsheets/                   # Synchronized CSV files
+        ├── spreadsheet1/               # Each spreadsheet gets its own directory
+        │   ├── Sheet1.csv             # One CSV per worksheet
+        │   └── Sheet2.csv
+        └── spreadsheet2/
+            └── Sheet1.csv
 ```
 
 ### Manifest File Structure
 
-The `@manifest.json` in your docs directory maintains the sync state and metadata:
+The `@manifest.json` in your documents directory maintains the sync state and metadata:
 
 ```json
 [
@@ -227,4 +273,4 @@ The `@manifest.json` in your docs directory maintains the sync state and metadat
     // ... other documents ...
 ]
 ```
-Note: The `docs/` directory and its contents are gitignored since they contain your synchronized content. The structure above shows an example of how files are organized after syncing. 
+Note: The `destination_folder/` directory and its contents are gitignored since they contain your synchronized content. The structure above shows an example of how files are organized after syncing. 

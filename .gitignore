@@ -175,10 +175,7 @@ cython_debug/
 
 # Exclude .git files
 
-
-
 *test*
-
 
 prd.md
 sync.log
@@ -186,8 +183,11 @@ sync_docs.sh
 /temp/*
 !/temp/.gitkeep
 
-/gdocs/*
-!/gdocs/.gitkeep
+# Synced content directories
+/gdocs/documents/*
+!/gdocs/documents/.gitkeep
+/gdocs/spreadsheets/*
+!/gdocs/spreadsheets/.gitkeep
 
 .cursorrules
 /.cursor
