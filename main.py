@@ -8,9 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from termcolor import colored
-from utils.drive_ops import DriveOperations
-from utils.sheets_ops import SheetsOperations
-from utils.markdown_metadata_ops import MarkdownMetadataOperations
+from utils.google_drive_ops import DriveOperations
+from utils.google_sheets_ops import SheetsOperations
+from utils.document_metadata_ops import DocumentMetadataOperations
 from utils.spreadsheet_metadata_ops import SpreadsheetMetadataOperations
 import pytz
 import json
@@ -58,13 +58,13 @@ def get_local_file_info(directory: Path, pattern: str = "*.md"):
         local_files[file_path.stem] = mtime
     return local_files
 
-async def sync_docs(drive_ops, source_folder_id: str, dest_path: Path):
+async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
     """Sync Google Docs to local markdown files."""
     print("\nSyncing Google Docs...")
     
     try:
         # Get list of docs in the source folder
-        docs = drive_ops.list_docs_in_folder(source_folder_id)
+        docs = google_drive_ops.list_docs_in_folder(source_folder_id)
         if not docs:
             print(colored("No documents found to sync", "yellow"))
             return
@@ -115,7 +115,7 @@ async def sync_docs(drive_ops, source_folder_id: str, dest_path: Path):
                 
                 if needs_update:
                     # Export the document to Markdown
-                    content = drive_ops.export_doc_to_markdown(doc['id'])
+                    content = google_drive_ops.export_doc_to_markdown(doc['id'])
                     if content:
                         # Write to local file
                         local_path.write_text(content, encoding='utf-8')
@@ -140,13 +140,13 @@ async def sync_docs(drive_ops, source_folder_id: str, dest_path: Path):
         print(colored(f"✗ Docs sync failed: {str(e)}", "red"))
         return {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 1, 'removed': 0}, []
 
-async def sync_sheets(sheets_ops, source_folder_id: str, dest_path: Path):
+async def sync_sheets(google_sheets_ops, source_folder_id: str, dest_path: Path):
     """Sync Google Sheets to local CSV files."""
     print("\nSyncing Google Sheets...")
     
     try:
         # Get list of sheets in the source folder
-        sheets = sheets_ops.list_sheets_in_folder(source_folder_id)
+        sheets = google_sheets_ops.list_sheets_in_folder(source_folder_id)
         if not sheets:
             print(colored("No spreadsheets found to sync", "yellow"))
             return {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'removed': 0}, []
@@ -158,7 +158,7 @@ async def sync_sheets(sheets_ops, source_folder_id: str, dest_path: Path):
         for sheet in sheets:
             try:
                 # Get metadata about the spreadsheet
-                metadata = sheets_ops.get_sheet_metadata(sheet['id'])
+                metadata = google_sheets_ops.get_sheet_metadata(sheet['id'])
                 if not metadata:
                     print(colored(f"✗ Failed to get metadata for {sheet['name']}", "red"))
                     stats['failed'] += 1
@@ -188,10 +188,10 @@ async def sync_sheets(sheets_ops, source_folder_id: str, dest_path: Path):
                     
                     if needs_update:
                         # Export the worksheet to CSV
-                        sheet_data = sheets_ops.export_sheet_to_csv(sheet['id'], worksheet_name)
+                        sheet_data = google_sheets_ops.export_sheet_to_csv(sheet['id'], worksheet_name)
                         if sheet_data:
                             # Save the CSV file
-                            csv_file = sheets_ops.save_sheet_as_csv(
+                            csv_file = google_sheets_ops.save_sheet_as_csv(
                                 sheet['id'],
                                 metadata,
                                 sheet_data,
@@ -246,18 +246,18 @@ async def main():
         source_folder_id, dest_path = setup()
         
         # Initialize Drive operations
-        drive_ops = DriveOperations(dest_path)
-        if not drive_ops.authenticate():
+        google_drive_ops = DriveOperations(dest_path)
+        if not google_drive_ops.authenticate():
             sys.exit(1)
         
         # Initialize Sheets operations with same credentials
-        sheets_ops = SheetsOperations(dest_path)
-        if not sheets_ops.authenticate(drive_ops.get_credentials()):
+        google_sheets_ops = SheetsOperations(dest_path)
+        if not google_sheets_ops.authenticate(google_drive_ops.get_credentials()):
             sys.exit(1)
         
         # Perform syncs
-        doc_stats, doc_updated_files = await sync_docs(drive_ops, source_folder_id, dest_path)
-        sheet_stats, sheet_updated_files = await sync_sheets(sheets_ops, source_folder_id, dest_path)
+        doc_stats, doc_updated_files = await sync_docs(google_drive_ops, source_folder_id, dest_path)
+        sheet_stats, sheet_updated_files = await sync_sheets(google_sheets_ops, source_folder_id, dest_path)
         
         # Print overall summary
         print_sync_summary(doc_stats, sheet_stats)
@@ -265,7 +265,7 @@ async def main():
         # Check if we need to update metadata for documents
         if doc_updated_files or doc_stats['removed']:
             print("\nUpdating document metadata...")
-            metadata_ops = MarkdownMetadataOperations(dest_path / "documents")
+            metadata_ops = DocumentMetadataOperations(dest_path / "documents")
             await metadata_ops.update_manifest()
         else:
             print(colored("\nDocument metadata is up to date", "green"))

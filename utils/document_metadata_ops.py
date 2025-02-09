@@ -1,5 +1,5 @@
 """
-Metadata operations for markdown document analysis and manifest management.
+Metadata operations for document analysis and manifest management.
 """
 import json
 import os
@@ -13,12 +13,12 @@ import pytz
 import glob
 import hashlib
 
-class MarkdownMetadataOperations:
+class DocumentMetadataOperations:
     def __init__(self, base_dir: str):
-        """Initialize metadata operations for markdown documents."""
+        """Initialize metadata operations for documents."""
         self.base_dir = Path(base_dir)
         self.manifest_path = self.base_dir / "@manifest.json"
-        self.prompt_template_path = Path("prompts/extract_markdown_metadata.md")
+        self.prompt_template_path = Path("prompts/extract_document_metadata.md")
         
         # Load environment variables
         load_dotenv()
