@@ -1,10 +1,10 @@
-# Google Workspace to Local Sync Utility
+# Use Google Docs as a Knowledge Base for LLMs
 
-This utility automatically synchronizes Google Docs and Sheets from a specified Google Drive folder to local files:
+This utility automatically synchronizes Google Docs and Sheets from a specified Google Drive folder to local files and generates rich metadata to be used as a knowledge base for LLMs:
 - Google Docs are converted to Markdown files with rich metadata
 - Google Sheets are converted to CSV files with rich metadata
-- Uses async processing for efficient metadata generation
-- Handles image references cleanly
+- Uses async processing for efficient metadata generation via LLM
+- Produces a manifest containing metadata for each file
 
 ## Setup
 
