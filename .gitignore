@@ -189,7 +189,6 @@ sync_docs.sh
 /gdocs/spreadsheets/*
 !/gdocs/spreadsheets/.gitkeep
 
-.cursorrules
-/.cursor
-/tools
+
 com.gdocs-sync.service.plist
+agent_tool_plan.md

@@ -19,10 +19,16 @@ SCOPES = [
 ]
 
 class DriveOperations:
-    def __init__(self, base_dir: str):
-        """Initialize the Drive API client."""
+    def __init__(self, base_dir: str, folder_name: str = None):
+        """Initialize the Drive API client.
+        
+        Args:
+            base_dir (str): Base directory for all synced content
+            folder_name (str): Name of the specific folder configuration being synced
+        """
         self.base_dir = Path(base_dir)
-        self.docs_dir = self.base_dir / "documents"
+        self.folder_name = folder_name
+        self.docs_dir = self.base_dir / (folder_name if folder_name else "") / "documents"
         self.docs_dir.mkdir(parents=True, exist_ok=True)
         self.creds = None
         self.service = None

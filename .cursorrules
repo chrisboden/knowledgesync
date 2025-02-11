@@ -1,0 +1,17 @@
+# EXTRA TOOLS THAT GIVE YOU SUPERPOWERS
+
+To be really helpful to me, you need access to knowledge about me and my work. For that I have extended your capabilities with cli programs in the /tools dir:
+
+1. use_knowledge.py - lets you query my knowledgebase to get the context you need.
+Simply run `python3 tools/use_knowledge.py "test query"` and you will get back relevant context in an md file that you can use in subsequent steps.
+
+
+# BUILDING APPS
+
+We use python3
+Use fastapi for backend
+Use vanilla html/js/css for frontend
+Use hosted tailwind for frontend css/js libs
+Use daisy ui with 'winter' theme for theming tailwind
+Write API's and test them yourself with curl
+Use extensive commenting & docstrings

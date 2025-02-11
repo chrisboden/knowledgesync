@@ -21,14 +21,20 @@ def setup():
     
     # Load environment variables
     load_dotenv()
-    source_folder_id = os.getenv('SOURCE_FOLDER_ID')
+    drive_folders = os.getenv('DRIVE_FOLDERS')
     dest_folder = os.getenv('DESTINATION_FOLDER')
     
-    if not source_folder_id or not dest_folder:
+    if not drive_folders or not dest_folder:
         print(colored("✗ Missing environment variables. Please check .env file.", "red"))
         print("Required variables:")
-        print("- SOURCE_FOLDER_ID: The ID of your Google Drive folder")
+        print("- DRIVE_FOLDERS: JSON object mapping folder names to Google Drive folder IDs")
         print("- DESTINATION_FOLDER: Path to local destination folder")
+        sys.exit(1)
+    
+    try:
+        drive_folders = json.loads(drive_folders)
+    except json.JSONDecodeError:
+        print(colored("✗ DRIVE_FOLDERS must be a valid JSON object", "red"))
         sys.exit(1)
     
     # Check for credentials file
@@ -41,11 +47,7 @@ def setup():
     dest_path = Path(dest_folder)
     dest_path.mkdir(parents=True, exist_ok=True)
     
-    # Create subdirectories
-    (dest_path / "documents").mkdir(exist_ok=True)
-    (dest_path / "spreadsheets").mkdir(exist_ok=True)
-    
-    return source_folder_id, dest_path
+    return drive_folders, dest_path
 
 def get_local_file_info(directory: Path, pattern: str = "*.md"):
     """Get information about existing local files."""
@@ -70,7 +72,8 @@ async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
             return
         
         # Get info about existing local files
-        local_files = get_local_file_info(dest_path / "documents")
+        docs_dir = google_drive_ops.docs_dir
+        local_files = get_local_file_info(docs_dir)
         
         # Track sync statistics
         stats = {'created': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'removed': 0}
@@ -82,7 +85,7 @@ async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
         # Check for files that need to be removed
         for local_file_name in local_files.keys():
             if local_file_name not in gdrive_doc_names:
-                local_file_path = dest_path / "documents" / f"{local_file_name}.md"
+                local_file_path = docs_dir / f"{local_file_name}.md"
                 try:
                     local_file_path.unlink()
                     print(colored(f"- Removed {local_file_name}.md (deleted from Google Drive)", "yellow"))
@@ -101,7 +104,7 @@ async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
                 local_filename = f"{base_name}.md"
                 
                 # Create Path object for local file
-                local_path = dest_path / "documents" / local_filename
+                local_path = docs_dir / local_filename
                 
                 # Check if we need to update this file
                 needs_update = True
@@ -165,7 +168,7 @@ async def sync_sheets(google_sheets_ops, source_folder_id: str, dest_path: Path)
                     continue
                 
                 # Create directory for this spreadsheet
-                sheet_dir = dest_path / "spreadsheets" / metadata['title']
+                sheet_dir = google_sheets_ops.sheets_dir / metadata['title']
                 sheet_dir.mkdir(exist_ok=True)
                 
                 # Process each worksheet
@@ -243,55 +246,63 @@ async def main():
     """Main entry point."""
     try:
         # Setup and initialize
-        source_folder_id, dest_path = setup()
+        drive_folders, dest_path = setup()
         
-        # Initialize Drive operations
-        google_drive_ops = DriveOperations(dest_path)
-        if not google_drive_ops.authenticate():
-            sys.exit(1)
+        # Process each configured folder
+        for folder_name, folder_id in drive_folders.items():
+            print(colored(f"\nProcessing folder: {folder_name}", "cyan"))
+            
+            # Initialize Drive operations for this folder
+            google_drive_ops = DriveOperations(dest_path, folder_name)
+            if not google_drive_ops.authenticate():
+                print(colored(f"Skipping folder {folder_name} due to authentication failure", "yellow"))
+                continue
+            
+            # Initialize Sheets operations with same credentials
+            google_sheets_ops = SheetsOperations(dest_path, folder_name)
+            if not google_sheets_ops.authenticate(google_drive_ops.get_credentials()):
+                print(colored(f"Skipping folder {folder_name} due to Sheets authentication failure", "yellow"))
+                continue
+            
+            # Perform syncs for this folder
+            doc_stats, doc_updated_files = await sync_docs(google_drive_ops, folder_id, dest_path)
+            sheet_stats, sheet_updated_files = await sync_sheets(google_sheets_ops, folder_id, dest_path)
+            
+            # Print folder summary
+            print(f"\nSummary for folder {folder_name}:")
+            print_sync_summary(doc_stats, sheet_stats)
+            
+            # Update metadata if needed
+            folder_base = dest_path / folder_name
+            
+            if doc_updated_files or doc_stats['removed']:
+                print("\nUpdating document metadata...")
+                metadata_ops = DocumentMetadataOperations(folder_base / "documents")
+                await metadata_ops.update_manifest()
+            else:
+                print(colored("\nDocument metadata is up to date", "green"))
+            
+            # Check if we need to update metadata for spreadsheets
+            spreadsheet_metadata_ops = SpreadsheetMetadataOperations(folder_base)
+            manifest_path = folder_base / "spreadsheets" / "@manifest.json"
+            needs_metadata_update = (
+                sheet_updated_files or 
+                sheet_stats['removed'] or 
+                not manifest_path.exists() or
+                (manifest_path.exists() and manifest_path.stat().st_size == 0) or
+                (manifest_path.exists() and len(json.loads(manifest_path.read_text())) == 0)
+            )
+            
+            if needs_metadata_update:
+                print("\nUpdating spreadsheet metadata...")
+                await spreadsheet_metadata_ops.update_manifest()
+            else:
+                print(colored("\nSpreadsheet metadata is up to date", "green"))
         
-        # Initialize Sheets operations with same credentials
-        google_sheets_ops = SheetsOperations(dest_path)
-        if not google_sheets_ops.authenticate(google_drive_ops.get_credentials()):
-            sys.exit(1)
+        print(colored("\nSync completed successfully!", "green"))
         
-        # Perform syncs
-        doc_stats, doc_updated_files = await sync_docs(google_drive_ops, source_folder_id, dest_path)
-        sheet_stats, sheet_updated_files = await sync_sheets(google_sheets_ops, source_folder_id, dest_path)
-        
-        # Print overall summary
-        print_sync_summary(doc_stats, sheet_stats)
-        
-        # Check if we need to update metadata for documents
-        if doc_updated_files or doc_stats['removed']:
-            print("\nUpdating document metadata...")
-            metadata_ops = DocumentMetadataOperations(dest_path / "documents")
-            await metadata_ops.update_manifest()
-        else:
-            print(colored("\nDocument metadata is up to date", "green"))
-        
-        # Check if we need to update metadata for spreadsheets
-        spreadsheet_metadata_ops = SpreadsheetMetadataOperations(dest_path)
-        manifest_path = dest_path / "spreadsheets" / "@manifest.json"
-        needs_metadata_update = (
-            sheet_updated_files or 
-            sheet_stats['removed'] or 
-            not manifest_path.exists() or
-            manifest_path.stat().st_size == 0 or
-            len(json.loads(manifest_path.read_text() if manifest_path.exists() else "[]")) == 0
-        )
-        
-        if needs_metadata_update:
-            print("\nUpdating spreadsheet metadata...")
-            await spreadsheet_metadata_ops.update_manifest()
-        else:
-            print(colored("\nSpreadsheet metadata is up to date", "green"))
-        
-    except KeyboardInterrupt:
-        print(colored("\n\nSync interrupted by user", "yellow"))
-        sys.exit(0)
     except Exception as e:
-        print(colored(f"\n✗ Unexpected error: {str(e)}", "red"))
+        print(colored(f"✗ Sync failed: {str(e)}", "red"))
         sys.exit(1)
 
 if __name__ == "__main__":

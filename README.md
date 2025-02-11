@@ -1,10 +1,11 @@
 # Use Google Docs as a Knowledge Base for LLMs
 
-This utility automatically synchronizes Google Docs and Sheets from a specified Google Drive folder to local files and generates rich metadata to be used as a knowledge base for LLMs:
+This utility automatically synchronizes Google Docs and Sheets from multiple Google Drive folders to local files and generates rich metadata to be used as a knowledge base for LLMs:
 - Google Docs are converted to Markdown files with rich metadata
 - Google Sheets are converted to CSV files with rich metadata
 - Uses async processing for efficient metadata generation via LLM
 - Produces a manifest containing metadata for each file
+- Supports multiple Google Drive folders with separate local destinations
 
 ## Setup
 
@@ -23,33 +24,45 @@ This utility automatically synchronizes Google Docs and Sheets from a specified 
       - Enable "Google Sheets API"
       - Click "Enable" for each
    4. Configure OAuth consent screen:
-      - Go to "APIs & Services" > "OAuth consent screen"
-      - Select "External" user type
-      - Fill in the application name and user support email
+      - Go directly to [OAuth consent screen setup](https://console.cloud.google.com/apis/credentials/consent)
+      - Select "External" user type (unless you have Google Workspace)
+      - Fill in the required fields:
+         - App name: Your app name (e.g., "Knowledge Sync")
+         - User support email: Your email
+         - Developer contact email: Your email
+      - Skip adding scopes (they'll be added automatically)
       - Add your email as a test user
+      - You can skip optional fields - they're not needed for testing
    5. Create OAuth 2.0 credentials:
       - Go to "APIs & Services" > "Credentials"
       - Click "Create Credentials" > "OAuth client ID"
       - Choose "Desktop application" as the application type
-      - Name your client
+      - Name your client (e.g., "Knowledge Sync Desktop")
       - Download the credentials JSON file
       - Save it as `credentials.json` in the project root
 
+   > **Note**: If you get stuck in a loop on the branding page, use the direct link to the OAuth consent screen: https://console.cloud.google.com/apis/credentials/consent
+
 4. Create a `.env` file with:
    ```
-   # Google Drive folder ID (from the folder's URL)
+   # Google Drive folder IDs (from the folder URLs)
    # Example URL: https://drive.google.com/drive/folders/1234567890abcdef
-   # Folder ID would be: 1234567890abcdef
-   SOURCE_FOLDER_ID=your_google_drive_folder_id
+   # Specify as a JSON object mapping folder names to IDs:
+   DRIVE_FOLDERS={"knowledge": "folder_id_1", "projects": "folder_id_2", "team": "folder_id_3"}
 
    # Local destination folder for synced files
    # Use absolute path for best results
-   DESTINATION_FOLDER=path/to/local/folder
+   DESTINATION_FOLDER=/path/to/local/folder
 
    # OpenRouter Configuration (for AI metadata extraction)
    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
    OPENROUTER_API_KEY=your_openrouter_api_key
    ```
+
+   Each folder in `DRIVE_FOLDERS` will be synced to its own subdirectory under `DESTINATION_FOLDER`. For example:
+   - `knowledge` folder syncs to `DESTINATION_FOLDER/knowledge/`
+   - `projects` folder syncs to `DESTINATION_FOLDER/projects/`
+   - `team` folder syncs to `DESTINATION_FOLDER/team/`
 
 ## Usage
 
@@ -76,6 +89,10 @@ python main.py
 
 ## Features
 
+- Support for multiple Google Drive folders:
+  - Each folder syncs to its own subdirectory
+  - Independent metadata tracking per folder
+  - Parallel processing of folders
 - Automatic sync of Google Workspace files:
   - Google Docs to Markdown
   - Google Sheets to CSV (one CSV per worksheet)
@@ -95,48 +112,58 @@ python main.py
 
 ```
 .
-├── .env_example                         # Rename to .env and add your own values
-├── .gitignore                           # Git ignore rules
-├── README.md                            # Project documentation
-├── credentials_example.json             # Rename to credentials.json and add your values
-├── main.py                              # Main sync script
-├── utils/                               # Utility modules
-│   ├── __init__.py                     # Module exports
-│   ├── google_drive_ops.py             # Google Drive operations
-│   ├── google_sheets_ops.py            # Google Sheets operations
-│   ├── document_metadata_ops.py        # Document metadata operations
-│   └── spreadsheet_metadata_ops.py     # Spreadsheet metadata operations
-├── prompts/                             # AI prompt templates
-│   ├── extract_document_metadata.md     # Document metadata extraction prompt
+├── .env                                # Environment configuration (created from .env_example)
+├── .env_example                        # Template for environment variables
+├── .gitignore                         # Git ignore rules
+├── README.md                          # Project documentation
+├── credentials.json                    # Your Google OAuth credentials (created from credentials_example.json)
+├── main.py                           # Main sync script
+├── token.pickle                       # Google API auth token (auto-generated on first run)
+├── temp/                             # Temporary files for knowledge base queries
+│   └── knowledge_base.md             # Generated knowledge base (temporary)
+├── tools/                            # CLI tools
+│   ├── README.md                     # Tools documentation
+│   └── use_knowledge.py              # Knowledge base query tool
+├── utils/                            # Utility modules
+│   ├── __init__.py                  # Module exports
+│   ├── google_drive_ops.py          # Google Drive operations
+│   ├── google_sheets_ops.py         # Google Sheets operations
+│   ├── document_metadata_ops.py     # Document metadata operations
+│   └── spreadsheet_metadata_ops.py  # Spreadsheet metadata operations
+├── prompts/                          # AI prompt templates
+│   ├── extract_document_metadata.md  # Document metadata extraction prompt
 │   └── extract_spreadsheet_metadata.md  # Spreadsheet metadata extraction prompt
-├── requirements.txt                     # Python dependencies
-├── sync_docs.sh                         # Sync automation script
-├── com.gdocs-sync.service.plist         # macOS launch daemon config
-└── destination_folder/                  # Your configured sync destination
-    ├── documents/                       # Synchronized markdown documents
-    │   ├── @manifest.json              # Document metadata manifest
-    │   ├── document1.md                # Converted Google Docs
-    │   └── document2.md
-    └── spreadsheets/                   # Synchronized CSV files
-        ├── @manifest.json              # Spreadsheet metadata manifest
-        ├── spreadsheet1/               # Each spreadsheet gets its own directory
-        │   ├── Sheet1.csv             # One CSV per worksheet
-        │   └── Sheet2.csv
-        └── spreadsheet2/
-            └── Sheet1.csv
+├── requirements.txt                  # Python dependencies
+├── sync_docs.sh                      # Sync automation script
+├── com.gdocs-sync.service.plist      # macOS launch daemon config
+└── destination_folder/               # Your configured sync destination (name matches DESTINATION_FOLDER)
+    ├── knowledge/                    # First Drive folder sync
+    │   ├── documents/               # Synchronized markdown documents
+    │   │   ├── @manifest.json      # Document metadata manifest (auto-generated)
+    │   │   └── *.md               # Converted Google Docs
+    │   └── spreadsheets/          # Synchronized CSV files
+    │       ├── @manifest.json     # Spreadsheet metadata manifest (auto-generated)
+    │       └── */                 # One directory per spreadsheet
+    │           └── *.csv         # One CSV per worksheet
+    ├── projects/                   # Second Drive folder sync (same structure)
+    │   ├── documents/
+    │   └── spreadsheets/
+    └── team/                      # Third Drive folder sync (same structure)
+        ├── documents/
+        └── spreadsheets/
 ```
 
 ## Metadata Management
 
-The utility maintains two manifest files:
-1. `documents/@manifest.json` - Document metadata including:
+The utility maintains two manifest files per folder:
+1. `{folder}/documents/@manifest.json` - Document metadata including:
    - Document summaries
    - Topics and categories
    - Document sections
    - Last update timestamps
    - Processing status
 
-2. `spreadsheets/@manifest.json` - Spreadsheet metadata including:
+2. `{folder}/spreadsheets/@manifest.json` - Spreadsheet metadata including:
    - Spreadsheet purpose and content
    - Data types and relationships
    - Worksheet descriptions

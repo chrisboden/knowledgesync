@@ -1,0 +1,149 @@
+---
+description: Instructions for creating tools for use by AI agents
+globs: 
+---
+## How to Write a Tool
+
+### Overview
+
+Writing a tool for this app involves creating a Python module that defines an `execute` function and a `TOOL_METADATA` dictionary. The `execute` function handles the logic for the tool, while `TOOL_METADATA` provides information about the tool's name, description, and parameters. In this updated approach, the tool no longer accepts an external `llm_client` parameter. Instead, the tool itself instantiates the LLM client within its code. This document also explains how to call and test the tool in standalone mode.
+
+### Step-by-Step Guide
+
+1. **Create a New Tool File**
+
+   - Navigate to the `tools` directory.
+   - Create a new Python file for your tool, e.g., `my_tool.py`.
+
+2. **Define the `execute` Function**
+
+   - The `execute` function should contain the logic for your tool.
+   - Instead of receiving an `llm_client` as an argument, instantiate the client directly within the function.
+   - Use a system message to define the LLM's role and a user message to provide the query input.
+
+   ```python
+   from openai import OpenAI
+   import os
+
+   def execute(**kwargs):
+       """
+       Execute the tool logic.
+
+       Parameters:
+       - **kwargs: Additional arguments specific to the tool.
+
+       Returns:
+       - dict: A dictionary with the tool's result and any follow-on instructions.
+       """
+       # Example logic: generate a result string based on input parameters or internal processing
+       result = "Your tool result here"
+
+       # Instantiate the LLM client directly within the tool
+       client = OpenAI(
+           base_url=os.getenv('API_BASE_URL'),
+           api_key=os.getenv("OPENROUTER_API_KEY")
+       )
+
+       # Create a prompt using a system message to specify the role of the LLM and a user message with the query
+       prompt = f"Process the result: {result}"
+       response = client.chat.completions.create(
+           model='gpt-4o-mini',
+           messages=[
+               {"role": "system", "content": "You are a helpful assistant."},
+               {"role": "user", "content": prompt}
+           ]
+       )
+       processed_result = response.choices[0].message.content.strip()
+
+       return {
+           "result": processed_result,
+           "follow_on_instructions": []  # Optional follow-on instructions
+       }
+   ```
+
+   - **Using an LLM Call within the Tool:**  
+     If your tool requires additional processing or context (for example, summarizing a headline), you can instantiate the client and include a system message in the prompt:
+
+   ```python
+   def summarize_headline(headline):
+       from openai import OpenAI
+       import os
+       client = OpenAI(
+           base_url=os.getenv('API_BASE_URL'),
+           api_key=os.getenv("OPENROUTER_API_KEY")
+       )
+       prompt = (
+           f"Provide a concise 1-2 sentence summary of the following headline: {headline}."
+           " Start your response with 'Hola Friends, here's the tech news of the day'"
+       )
+       response = client.chat.completions.create(
+           model='gpt-4o-mini',
+           messages=[
+               {"role": "system", "content": "You are a summarization assistant."},
+               {"role": "user", "content": prompt}
+           ]
+       )
+       return response.choices[0].message.content.strip()
+   ```
+
+3. **Define the `TOOL_METADATA` Dictionary**
+
+   - The `TOOL_METADATA` dictionary provides information about the tool.
+   - It includes the tool's name, description, and parameters.
+
+   ```python
+   TOOL_METADATA = {
+       "type": "function",
+       "function": {
+           "name": "my_tool",
+           "description": "A brief description of what the tool does.",
+           "parameters": {
+               "type": "object",
+               "properties": {
+                   "param1": {
+                       "type": "string",
+                       "description": "Description of param1"
+                   },
+                   "param2": {
+                       "type": "integer",
+                       "description": "Description of param2"
+                   }
+               },
+               "required": ["param1"]
+           }
+       }
+   }
+   ```
+
+4. **Test Your Tool**
+
+   - **Manual Testing:**  
+     Ensure your tool works as expected by testing it manually. You can create a temporary script or use a test framework to call the `execute` function with sample parameters.
+
+5. **Call the Tool in Standalone Mode**
+
+   - To test your tool in standalone mode, include an `if __name__ == "__main__":` block at the end of your file. This allows you to run the tool directly from the command line.
+
+   ```python
+   if __name__ == "__main__":
+       # Example call: provide sample parameters as needed by your tool
+       test_params = {
+           "param1": "example value",
+           "param2": 42
+       }
+       result = execute(**test_params)
+       print("Tool execution result:")
+       print(result)
+   ```
+
+6. **Integrate Your Tool**
+
+   - Once your tool is tested and working in standalone mode, it will be automatically discovered and registered for use by the AI agent.
+   - No manual registration is required.
+
+### Summary
+
+By following these steps, you can create a tool that:
+- Encapsulates its own LLM client instantiation.
+- Uses structured messages (with system and user roles) to interact with the LLM.
+- Is callable and testable in standalone mode, making it easier to debug and verify functionality before integrating into the larger AI framework.

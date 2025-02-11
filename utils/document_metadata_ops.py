@@ -13,6 +13,12 @@ import pytz
 import glob
 import hashlib
 
+# LLM Configuration - override these values as needed
+LLM_API_KEY_ENV_VAR = 'OPENROUTER_API_KEY'  # Environment variable name for API key
+LLM_BASE_URL_ENV_VAR = 'OPENROUTER_BASE_URL'  # Environment variable name for base URL
+LLM_MODEL = 'google/gemini-2.0-flash-001'  # Default model to use
+LLM_DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'  # Default base URL if not specified
+
 class DocumentMetadataOperations:
     def __init__(self, base_dir: str):
         """Initialize metadata operations for documents."""
@@ -23,23 +29,23 @@ class DocumentMetadataOperations:
         # Load environment variables
         load_dotenv()
         
-        # Configure OpenAI client for OpenRouter
-        api_key = os.getenv('OPENROUTER_API_KEY')
-        base_url = os.getenv('OPENROUTER_BASE_URL')
+        # Configure OpenAI client for LLM API
+        api_key = os.getenv(LLM_API_KEY_ENV_VAR)
+        base_url = os.getenv(LLM_BASE_URL_ENV_VAR, LLM_DEFAULT_BASE_URL)
         
-        if not api_key or not base_url:
-            print(colored("✗ Missing OpenRouter configuration. Check OPENROUTER_API_KEY and OPENROUTER_BASE_URL in .env", "red"))
+        if not api_key:
+            print(colored(f"✗ Missing LLM API key. Check {LLM_API_KEY_ENV_VAR} in .env", "red"))
             return
             
-        print(colored("✓ OpenRouter configuration loaded", "green"))
+        print(colored("✓ LLM configuration loaded", "green"))
         
-        # Initialize OpenAI client with OpenRouter configuration
+        # Initialize OpenAI client with LLM configuration
         self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             default_headers={
                 "HTTP-Referer": "https://github.com/chrisboden/knowledgesync",
-                "X-Title": "GDocs Sync"
+                "X-Title": "Knowledge Sync"
             }
         )
         
@@ -97,14 +103,14 @@ class DocumentMetadataOperations:
                 file_contents=file_contents
             )
             
-            print(colored("Calling OpenRouter API...", "cyan"))
+            print(colored("Calling LLM API...", "cyan"))
             
             # Create a default metadata structure
             default_metadata = {
                 "id": f"doc_{hash(file_path.name)}",
                 "title": file_path.stem,
                 "fileName": file_path.name,
-                "localPath": str(self.base_dir),  # Use actual base directory
+                "localPath": str(self.base_dir),
                 "createdAt": datetime.fromtimestamp(file_path.stat().st_ctime).isoformat(),
                 "updatedAt": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
                 "summary": "",
@@ -118,9 +124,9 @@ class DocumentMetadataOperations:
                 "documentSections": []
             }
             
-            # Call OpenRouter API via OpenAI client
+            # Call LLM API via OpenAI client
             completion = await self.client.chat.completions.create(
-                model="google/gemini-2.0-flash-001",
+                model=LLM_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a Document Metadata Extraction Assistant."},
                     {"role": "user", "content": prompt}
@@ -281,93 +287,4 @@ class DocumentMetadataOperations:
                 file_path.rename(correct_path)
                 print(colored(f"✓ Fixed double extension: {file_path.name} -> {correct_path.name}", "green"))
             except Exception as e:
-                print(colored(f"✗ Error fixing double extension for {file_path.name}: {str(e)}", "red"))
-
-async def update_document_metadata(docs_dir: str, manifest_data: list):
-    """Update metadata for documents that need it based on specific criteria."""
-    print("\nUpdating document metadata...")
-    
-    # Load OpenRouter configuration
-    if not load_openrouter_config():
-        return
-    
-    markdown_files = glob.glob(os.path.join(docs_dir, "*.md"))
-    print(f"Found {len(markdown_files)} markdown files")
-    
-    files_to_update = []
-    for file_path in markdown_files:
-        file_name = os.path.basename(file_path)
-        file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path), tz=timezone.utc)
-        
-        # Find existing manifest entry
-        existing_doc = next((doc for doc in manifest_data if doc.get("fileName") == file_name), None)
-        
-        needs_update = False
-        if not existing_doc:
-            print(f"+ New file found: {file_name}")
-            needs_update = True
-        elif not existing_doc.get("metadata"):
-            print(f"⚠ No metadata found for: {file_name}")
-            needs_update = True
-        else:
-            # Convert last_synced to datetime for comparison
-            last_synced = datetime.fromisoformat(existing_doc.get("last_synced", "1970-01-01T00:00:00+00:00"))
-            if file_mtime > last_synced:
-                print(f"⟳ File modified: {file_name}")
-                print(f"   Previous update: {last_synced}")
-                print(f"   Current mtime: {file_mtime}")
-                needs_update = True
-            else:
-                print(f"↷ Skipping metadata for {file_name}")
-                print(f"   Last updated: {last_synced}")
-                continue
-        
-        if needs_update:
-            files_to_update.append(file_path)
-    
-    # Process files that need updating
-    updated_count = 0
-    skipped_count = len(markdown_files) - len(files_to_update)
-    failed_count = 0
-    
-    for file_path in files_to_update:
-        try:
-            file_name = os.path.basename(file_path)
-            print(f"\nExtracting metadata for {file_name}...")
-            
-            # Read file content
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            metadata = await extract_metadata_from_content(content, file_name)
-            if metadata:
-                # Update or add to manifest
-                doc_index = next((i for i, doc in enumerate(manifest_data) 
-                                if doc.get("fileName") == file_name), None)
-                
-                if doc_index is not None:
-                    manifest_data[doc_index].update(metadata)
-                    manifest_data[doc_index]["last_synced"] = datetime.now(timezone.utc).isoformat()
-                else:
-                    metadata["last_synced"] = datetime.now(timezone.utc).isoformat()
-                    manifest_data.append(metadata)
-                
-                updated_count += 1
-                print(f"✓ Metadata extracted successfully")
-            else:
-                failed_count += 1
-                print(f"✗ Failed to extract metadata")
-                
-        except Exception as e:
-            failed_count += 1
-            print(f"✗ Error processing {file_name}: {str(e)}")
-    
-    # Save updated manifest
-    manifest_path = os.path.join(docs_dir, "@manifest.json")
-    with open(manifest_path, 'w', encoding='utf-8') as f:
-        json.dump(manifest_data, f, indent=2)
-    
-    print(f"\nMetadata Update Summary:")
-    print(f"Added/Updated: {updated_count}")
-    print(f"Skipped: {skipped_count}")
-    print(f"Failed: {failed_count}") 
+                print(colored(f"✗ Error fixing double extension for {file_path.name}: {str(e)}", "red")) 

@@ -12,6 +12,12 @@ from openai import AsyncOpenAI
 import pytz
 import csv
 
+# LLM Configuration - override these values as needed
+LLM_API_KEY_ENV_VAR = 'OPENROUTER_API_KEY'  # Environment variable name for API key
+LLM_BASE_URL_ENV_VAR = 'OPENROUTER_BASE_URL'  # Environment variable name for base URL
+LLM_MODEL = 'google/gemini-2.0-flash-001'  # Default model to use
+LLM_DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'  # Default base URL if not specified
+
 class SpreadsheetMetadataOperations:
     def __init__(self, base_dir: str):
         """Initialize metadata operations."""
@@ -23,23 +29,23 @@ class SpreadsheetMetadataOperations:
         # Load environment variables
         load_dotenv()
         
-        # Configure OpenAI client for OpenRouter
-        api_key = os.getenv('OPENROUTER_API_KEY')
-        base_url = os.getenv('OPENROUTER_BASE_URL')
+        # Configure OpenAI client for LLM API
+        api_key = os.getenv(LLM_API_KEY_ENV_VAR)
+        base_url = os.getenv(LLM_BASE_URL_ENV_VAR, LLM_DEFAULT_BASE_URL)
         
-        if not api_key or not base_url:
-            print(colored("✗ Missing OpenRouter configuration. Check OPENROUTER_API_KEY and OPENROUTER_BASE_URL in .env", "red"))
+        if not api_key:
+            print(colored(f"✗ Missing LLM API key. Check {LLM_API_KEY_ENV_VAR} in .env", "red"))
             return
             
-        print(colored("✓ OpenRouter configuration loaded", "green"))
+        print(colored("✓ LLM configuration loaded", "green"))
         
-        # Initialize OpenAI client with OpenRouter configuration
+        # Initialize OpenAI client with LLM configuration
         self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             default_headers={
                 "HTTP-Referer": "https://github.com/chrisboden/knowledgesync",
-                "X-Title": "GDocs Sync"
+                "X-Title": "Knowledge Sync"
             }
         )
         
@@ -128,11 +134,11 @@ class SpreadsheetMetadataOperations:
                 worksheet_contents=json.dumps(worksheet_contents, indent=2)
             )
             
-            print(colored("Calling OpenRouter API...", "cyan"))
+            print(colored("Calling LLM API...", "cyan"))
             
-            # Call OpenRouter API via OpenAI client
+            # Call LLM API via OpenAI client
             completion = await self.client.chat.completions.create(
-                model="google/gemini-2.0-flash-001",
+                model=LLM_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a Spreadsheet Metadata Extraction Assistant."},
                     {"role": "user", "content": prompt}
