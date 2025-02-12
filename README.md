@@ -9,7 +9,12 @@ This utility automatically synchronizes Google Docs and Sheets from multiple Goo
 
 ## Setup
 
-1. Clone this repository
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/chrisboden/knowledgesync.git
+   cd knowledgesync
+   ```
+
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
