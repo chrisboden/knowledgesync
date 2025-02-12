@@ -175,6 +175,61 @@ Metadata is only generated when:
 - An existing file is modified
 - A file's metadata is missing or incomplete
 
+## Using Your Knowledge Base with AI Agents
+
+The synchronized documents and their metadata can be used by AI agents to perform knowledge work. The repository includes a tool called `use_knowledge.py` that demonstrates this capability:
+
+### How the Knowledge Tool Works
+
+1. **Intelligent Document Selection**:
+   - Takes a natural language query about your knowledge base
+   - Uses LLM to analyze document and spreadsheet manifests
+   - Selects the most relevant files based on metadata (summaries, topics, sections)
+   - Supports searching across all synchronized folders
+
+2. **Knowledge Base Creation**:
+   - Combines selected documents and spreadsheets into a single markdown file
+   - Converts spreadsheets to markdown tables for easy reading
+   - Includes metadata about why each document was selected
+   - Creates a temporary file that can be used by AI agents
+
+3. **Agent Integration**:
+   - Perfect for use with AI agents (like Cursor's Composer)
+   - Agents can read the combined knowledge base
+   - Makes informed responses based on your organization's knowledge
+   - Maintains source attribution for all information
+
+### Example Usage
+
+Command line:
+```bash
+python tools/use_knowledge.py "what are our current AI initiatives?"
+```
+
+The tool will:
+1. Search through all document and spreadsheet manifests
+2. Select relevant files based on the query
+3. Create a combined markdown file with:
+   - Document content
+   - Converted spreadsheet data
+   - Selection rationales
+   - Source attribution
+
+This temporary knowledge base can then be used by AI agents to:
+- Answer questions about your organization
+- Analyze project data
+- Generate reports
+- Make recommendations based on your actual documents
+
+### Benefits
+
+- **Context-Aware**: Agents work with your actual organizational knowledge
+- **Source Attribution**: All information can be traced back to source documents
+- **Cross-Document Analysis**: Combines information from multiple sources
+- **Format Agnostic**: Works with both documents and spreadsheets
+- **Efficient**: Uses metadata for quick document selection
+- **Privacy-Focused**: Works with your local files, no cloud storage needed
+
 ## Monitoring
 
 - Check sync status: `launchctl list | grep gdocs-sync`
