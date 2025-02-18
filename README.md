@@ -1,4 +1,6 @@
-# Use Google Docs as a Knowledge Base for LLMs
+# Use Google Docs as a Knowledge Base for AI Agents
+
+Extend the capbilities of Cursor Composer and other agentic AI tools by providing them with the knowledge they need to do useful work for you.
 
 This utility automatically synchronizes Google Docs and Sheets from multiple Google Drive folders to local files and generates rich metadata to be used as a knowledge base for LLMs:
 - Google Docs are converted to Markdown files with rich metadata
