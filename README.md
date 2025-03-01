@@ -98,6 +98,26 @@ This utility helps maintain a clean sync state by:
 - Creating a backup of the sync state file before making changes
 - Displaying detailed information about what was removed
 
+### Upgrading to Two-Way Sync
+
+If you're upgrading from a previous version with one-way sync only:
+
+1. **Backup your synced folders** first
+2. **Clean your sync state**: `python clean_sync_state.py`
+3. **Run a pull operation**: `python main.py` (to ensure local files are updated)
+4. **Then run a push operation**: `python push_to_drive.py` (to establish file relationships)
+5. **Update your services** if using automated syncing:
+   ```bash
+   cp com.gdocs-sync.service.plist ~/Library/LaunchAgents/
+   cp com.gdocs-push.service.plist ~/Library/LaunchAgents/
+   launchctl unload ~/Library/LaunchAgents/com.gdocs-sync.service.plist
+   launchctl load ~/Library/LaunchAgents/com.gdocs-sync.service.plist
+   launchctl unload ~/Library/LaunchAgents/com.gdocs-push.service.plist
+   launchctl load ~/Library/LaunchAgents/com.gdocs-push.service.plist
+   ```
+
+Remember that local changes will now be pushed to Google Drive, so be mindful of what you edit locally. Run `clean_sync_state.py` after manual file deletions.
+
 ### Dedicated push tool:
 ```bash
 python push_to_drive.py
