@@ -73,9 +73,34 @@ This utility automatically synchronizes Google Docs and Sheets from multiple Goo
 
 ## Usage
 
-### One-time sync:
+### One-time sync (Google Drive to Local):
 ```bash
 python main.py
+```
+
+### Two-way sync (Google Drive to Local and Local to Google Drive):
+```bash
+python main.py --two-way
+```
+
+### Push-only sync (Local to Google Drive):
+```bash
+python push_to_drive.py
+```
+
+### Clean up sync state (after manual file deletions):
+```bash
+python clean_sync_state.py
+```
+This utility helps maintain a clean sync state by:
+- Validating all entries in the sync state against both local files and Google Drive
+- Removing entries for files that no longer exist on either side
+- Creating a backup of the sync state file before making changes
+- Displaying detailed information about what was removed
+
+### Dedicated push tool:
+```bash
+python push_to_drive.py
 ```
 
 ### Automated hourly sync (macOS):
@@ -84,14 +109,56 @@ python main.py
    chmod +x sync_docs.sh
    ```
 
-2. Copy the launchd plist to your user's LaunchAgents:
+2. Edit the sync service plist to set your workspace path:
+   ```bash
+   # Replace /path/to/your/workspace with your actual workspace path
+   sed -i '' "s|/Users/chrisboden/Desktop/trycursor|$(pwd)|g" com.gdocs-sync.service.plist
+   ```
+
+3. Copy the launchd plist to your user's LaunchAgents:
    ```bash
    cp com.gdocs-sync.service.plist ~/Library/LaunchAgents/
    ```
 
-3. Load the service:
+4. Load the service:
    ```bash
    launchctl load ~/Library/LaunchAgents/com.gdocs-sync.service.plist
+   ```
+
+### Automated hourly push (macOS):
+1. Make the push script executable:
+   ```bash
+   chmod +x push_to_drive.sh
+   ```
+
+2. Edit the push service plist to set your workspace path:
+   ```bash
+   # Replace /path/to/your/workspace with your actual workspace path
+   sed -i '' "s|/Users/chrisboden/Dropbox/tools/knowledgesync|$(pwd)|g" com.gdocs-push.service.plist
+   ```
+
+3. Copy the launchd plist to your user's LaunchAgents:
+   ```bash
+   cp com.gdocs-push.service.plist ~/Library/LaunchAgents/
+   ```
+
+4. Load the service:
+   ```bash
+   launchctl load ~/Library/LaunchAgents/com.gdocs-push.service.plist
+   ```
+
+5. Check that services are running:
+   ```bash
+   launchctl list | grep -E 'gdocs-sync|gdocs-push'
+   # Should show two entries with the services listed
+   ```
+
+6. If services are not running or show exit codes, unload and reload:
+   ```bash
+   launchctl unload ~/Library/LaunchAgents/com.gdocs-sync.service.plist
+   launchctl load ~/Library/LaunchAgents/com.gdocs-sync.service.plist
+   launchctl unload ~/Library/LaunchAgents/com.gdocs-push.service.plist
+   launchctl load ~/Library/LaunchAgents/com.gdocs-push.service.plist
    ```
 
 ## Features
@@ -103,6 +170,17 @@ python main.py
 - Automatic sync of Google Workspace files:
   - Google Docs to Markdown
   - Google Sheets to CSV (one CSV per worksheet)
+- Two-way sync support:
+  - Push local changes back to Google Drive
+  - Create new files in Google Drive from local files
+  - Track file relationships between local and remote
+- Spreadsheet ID verification:
+  - Verifies spreadsheet IDs match expected titles before updating
+  - Provides clear warnings for mismatches
+  - Displays all file IDs during sync operations for transparency
+- Sync state maintenance utilities:
+  - Clean up sync state after manual file deletions
+  - Prevent errors from missing files or incorrect IDs
 - Delta updates (only syncs changed files)
 - Rich metadata generation:
   - AI-powered metadata extraction for both documents and spreadsheets
@@ -240,10 +318,13 @@ This temporary knowledge base can then be used by AI agents to:
 ## Monitoring
 
 - Check sync status: `launchctl list | grep gdocs-sync`
+- Check push status: `launchctl list | grep gdocs-push`
 - View logs:
   ```bash
   tail -f sync.log     # For sync output
-  tail -f sync.error.log  # For error messages
+  tail -f sync.error.log  # For sync error messages
+  tail -f push.log     # For push output
+  tail -f push.error.log  # For push error messages
   ```
 
 ## Troubleshooting
@@ -258,12 +339,67 @@ This temporary knowledge base can then be used by AI agents to:
    - Ensure you have read access to the source folder
    - Review error messages in `sync.error.log`
 
-3. If scheduled sync isn't running:
+3. If spreadsheet sync has issues:
+   - Run `python clean_sync_state.py` to ensure the sync state is clean
+   - Check if spreadsheet IDs or names have changed
+   - Look for warning messages about spreadsheet ID verification
+
+4. If files were manually deleted:
+   - Run `python clean_sync_state.py` to update the sync state
+   - This prevents errors when trying to update non-existent files
+
+5. If scheduled sync isn't running:
    - Check service status: `launchctl list | grep gdocs-sync`
    - Ensure paths in `com.gdocs-sync.service.plist` are correct
    - Review system logs: `log show --predicate 'subsystem == "com.gdocs-sync.service"'`
 
-4. If metadata extraction fails:
+6. If metadata extraction fails:
    - Check OpenRouter API key and base URL in `.env`
    - Verify the file content is accessible
    - Look for token limit warnings in the logs
+
+## Spreadsheet Formatting
+
+When working with spreadsheets, follow these guidelines to ensure proper synchronization:
+
+1. **Use Standard CSV Formatting**:
+   - Avoid using comment lines (lines starting with `#`) in CSV files
+   - Ensure CSV files have proper headers as the first row
+   - Maintain consistent column structure throughout the file
+
+2. **Spreadsheet Structure**:
+   - Each spreadsheet is a directory containing one or more CSV files
+   - Each CSV file represents a worksheet in Google Sheets
+   - The directory name becomes the spreadsheet name in Google Drive
+
+Example of properly formatted CSV:
+```
+Name,Email,Role,Department
+John Doe,john@example.com,Developer,Engineering
+Jane Smith,jane@example.com,Designer,Product
+```
+
+Improper formatting (avoid):
+```
+# This is a comment line that may cause sync issues
+Name,Email,Role,Department
+John Doe,john@example.com,Developer,Engineering
+```
+
+## Testing
+
+Several test scripts are available in the `tests` directory, to verify functionality:
+
+1. `test_new_files.py` - Tests creation of new files & verifies that new files are properly created in Google Drive.
+2. `test_edit_files.py` - This test verifies that edits to local files are properly synced to Google Drive.
+3. `test_sync.py` - Tests basic two-way sync functionality
+4. `test_spreadsheet_sync.py` - Tests spreadsheet sync functionality
+5. `test_push_service.py` - Tests the configuration of the automated push service
+6. `test_edit_files_standard.py` - Tests editing and syncing existing files with standard CSV formatting
+
+Run each test with:
+```
+python3 tests/test_script_name.py
+```
+
+For more detailed testing instructions, see [TESTING.md](TESTING.md).

@@ -1,9 +1,29 @@
+<behavior_rules>
+You have one mission: execute *exactly* what is requested.
+
+Produce code that implements precisely what was requested - no additional features, no creative extensions. Follow instructions to the letter.
+
+Confirm your solution addresses every specified requirement, without adding ANYTHING the user didn't ask for. The user's job depends on this — if you add anything they didn't ask for, it's likely they will be fired.
+
+Your value comes from precision and reliability. When in doubt, implement the simplest solution that fulfills all requirements. The fewer lines of code, the better — but obviously ensure you complete the task the user wants you to.
+
+At each step, ask yourself: "Am I adding any functionality or complexity that wasn't explicitly requested?". This will force you to stay on track.
+</behavior_rules>
+
 # EXTRA TOOLS THAT GIVE YOU SUPERPOWERS
 
 To be really helpful to me, you need access to knowledge about me and my work. For that I have extended your capabilities with cli programs in the /tools dir:
 
 1. use_knowledge.py - lets you query my knowledgebase to get the context you need.
 Simply run `python3 tools/use_knowledge.py "test query"` and you will get back relevant context in an md file that you can use in subsequent steps.
+2. create_email.py - will send an email to recipient
+
+# SHORTCODES
+
+I will use hahtag shortcodes with you from time to time to give hints about what rules you should use. Whenevr I use a hashtag, assume I am asking you to consult a rule in this file or in the .cursor/rules dir.
+
+#bc - make sure you maintain backwards compatibility with what we have built so far - don't break anything
+
 
 
 # BUILDING APPS
@@ -15,3 +35,8 @@ Use hosted tailwind for frontend css/js libs
 Use daisy ui with 'winter' theme for theming tailwind
 Write API's and test them yourself with curl
 Use extensive commenting & docstrings
+
+# KNOWLEDGE SYNC
+
+Use the knowledge sync tool to sync your knowledge base.
+Simply run `python3 tools/use_knowledge.py "test query"` and you will get back relevant context in an md file that you can use in subsequent steps.

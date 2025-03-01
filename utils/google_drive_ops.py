@@ -14,8 +14,8 @@ from termcolor import colored
 
 # If modifying these scopes, delete the token.pickle file.
 SCOPES = [
-    'https://www.googleapis.com/auth/drive.readonly',
-    'https://www.googleapis.com/auth/spreadsheets.readonly'
+    'https://www.googleapis.com/auth/drive',  # Full access to Drive (needed for two-way sync)
+    'https://www.googleapis.com/auth/spreadsheets'  # Full access to Sheets (needed for two-way sync)
 ]
 
 class DriveOperations:

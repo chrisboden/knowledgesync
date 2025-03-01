@@ -1,6 +1,6 @@
 ---
 description: Instructions for creating tools for use by AI agents
-globs: 
+globs: *.py
 ---
 ## How to Write a Tool
 
