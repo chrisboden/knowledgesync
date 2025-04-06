@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 import pytz
 import csv
+import hashlib
 
 # LLM Configuration - override these values as needed
 LLM_API_KEY_ENV_VAR = 'OPENROUTER_API_KEY'  # Environment variable name for API key
@@ -75,10 +76,10 @@ class SpreadsheetMetadataOperations:
             print(colored(f"! Error loading manifest: {str(e)}", "yellow"))
             return []
             
-    def _save_manifest(self):
+    def _save_manifest(self, manifest):
         """Save the current manifest to file."""
         try:
-            self.manifest_path.write_text(json.dumps(self.manifest, indent=2))
+            self.manifest_path.write_text(json.dumps(manifest, indent=2))
         except Exception as e:
             print(colored(f"✗ Error saving manifest: {str(e)}", "red"))
             
@@ -100,6 +101,17 @@ class SpreadsheetMetadataOperations:
             print(colored(f"✗ Error reading CSV {csv_path.name}: {str(e)}", "red"))
             return None
             
+    def _get_content_hash(self, csv_files):
+        """Calculate a hash of all CSV files' content."""
+        content = ""
+        for csv_file in sorted(csv_files):  # Sort to ensure consistent order
+            try:
+                content += csv_file.read_text(encoding='utf-8')
+            except Exception as e:
+                print(colored(f"✗ Error reading {csv_file.name}: {str(e)}", "red"))
+                continue
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
     async def extract_metadata(self, spreadsheet_dir: Path):
         """Extract metadata from a spreadsheet directory."""
         try:
@@ -179,72 +191,77 @@ class SpreadsheetMetadataOperations:
             print(colored(f"✗ Error in metadata extraction: {str(e)}", "red"))
             return None
             
-    async def update_manifest(self):
+    async def update_manifest(self, force=False):
         """Update the manifest with metadata for all spreadsheets."""
         print(colored("\nUpdating spreadsheet metadata...", "cyan"))
         
-        # Get all spreadsheet directories
+        # Get list of spreadsheet directories
         spreadsheet_dirs = [d for d in self.spreadsheets_dir.iterdir() if d.is_dir()]
         print(colored(f"Found {len(spreadsheet_dirs)} spreadsheets", "cyan"))
         
-        stats = {"added": 0, "updated": 0, "failed": 0, "skipped": 0}
+        stats = {"added": 0, "updated": 0, "skipped": 0, "failed": 0}
         
-        for spreadsheet_dir in spreadsheet_dirs:
+        # Load current manifest
+        manifest = self._load_manifest()
+        
+        # Process each spreadsheet directory
+        for sheet_dir in spreadsheet_dirs:
             try:
-                # Check if we need to update this spreadsheet's metadata
-                needs_update = True
+                # Get list of CSV files in this directory
+                csv_files = list(sheet_dir.glob("*.csv"))
+                if not csv_files:
+                    continue
+                    
+                # Calculate content hash for all CSV files
+                current_hash = self._get_content_hash(csv_files)
+                
+                # Find existing entry
                 existing_entry = next(
-                    (item for item in self.manifest if item["title"] == spreadsheet_dir.name),
+                    (entry for entry in manifest if entry["title"] == sheet_dir.name),
                     None
                 )
                 
-                if existing_entry and all(key in existing_entry for key in ["about", "summary", "primaryTopics", "dataTypes"]):
-                    # Check if any CSV files are newer than last sync
-                    last_synced = datetime.fromisoformat(existing_entry["lastSynced"])
-                    csv_files = list(spreadsheet_dir.glob("*.csv"))
-                    
-                    if csv_files:
-                        newest_mtime = max(
-                            datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
-                            for f in csv_files
-                        )
-                        if newest_mtime <= last_synced:
-                            print(colored(f"↷ Skipping {spreadsheet_dir.name} (up to date)", "cyan"))
-                            stats["skipped"] += 1
-                            needs_update = False
-                            
-                if needs_update:
+                # Process spreadsheet if:
+                # 1. Force refresh is enabled, OR
+                # 2. No existing entry exists, OR
+                # 3. Content has changed (different hash)
+                if force or not existing_entry or ("contentHash" not in existing_entry) or (existing_entry["contentHash"] != current_hash):
                     # Extract metadata
-                    metadata = await self.extract_metadata(spreadsheet_dir)
-                    
+                    metadata = await self.extract_metadata(sheet_dir)
                     if metadata:
+                        # Add content hash
+                        metadata["contentHash"] = current_hash
+                        
                         if existing_entry:
                             # Update existing entry
-                            self.manifest.remove(existing_entry)
-                            self.manifest.append(metadata)
-                            print(colored(f"↻ Updated metadata for {spreadsheet_dir.name}", "green"))
+                            existing_idx = manifest.index(existing_entry)
+                            manifest[existing_idx] = metadata
+                            print(colored(f"↻ Updated metadata for {sheet_dir.name}", "green"))
                             stats["updated"] += 1
                         else:
                             # Add new entry
-                            self.manifest.append(metadata)
-                            print(colored(f"+ Added metadata for {spreadsheet_dir.name}", "green"))
+                            manifest.append(metadata)
+                            print(colored(f"+ Added metadata for {sheet_dir.name}", "green"))
                             stats["added"] += 1
-                            
-                        # Save after each successful update
-                        self._save_manifest()
                     else:
-                        print(colored(f"✗ Failed to extract metadata for {spreadsheet_dir.name}", "red"))
+                        print(colored(f"✗ Failed to extract metadata for {sheet_dir.name}", "red"))
                         stats["failed"] += 1
-                        
+                else:
+                    print(colored(f"↷ Skipping {sheet_dir.name} (up to date)", "cyan"))
+                    stats["skipped"] += 1
+                    
             except Exception as e:
-                print(colored(f"✗ Error processing {spreadsheet_dir.name}: {str(e)}", "red"))
+                print(colored(f"✗ Error processing {sheet_dir.name}: {str(e)}", "red"))
                 stats["failed"] += 1
                 
+        # Save updated manifest
+        self._save_manifest(manifest)
+        
         # Print summary
         print("\nSpreadsheet Metadata Update Summary:")
-        print(colored(f"Added: {stats['added']}", "green"))
-        print(colored(f"Updated: {stats['updated']}", "green"))
-        print(colored(f"Skipped: {stats['skipped']}", "cyan"))
-        print(colored(f"Failed: {stats['failed']}", "red"))
+        print(f"Added: {stats['added']}")
+        print(f"Updated: {stats['updated']}")
+        print(f"Skipped: {stats['skipped']}")
+        print(f"Failed: {stats['failed']}")
         
         return stats 

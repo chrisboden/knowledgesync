@@ -62,22 +62,27 @@ class DriveOperations:
             print(colored(f"✗ Authentication failed: {str(e)}", "red"))
             return False
 
-    def list_docs_in_folder(self, folder_id):
-        """List all Google Docs in the specified folder."""
+    def list_docs_in_folder(self, folder_id: str):
+        """List all Google Docs in a folder."""
         try:
-            query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document'"
+            # Query for Google Docs in the specified folder, excluding trashed files
             results = self.service.files().list(
-                q=query,
+                q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false",
                 fields="files(id, name, modifiedTime)"
             ).execute()
             
             files = results.get('files', [])
-            print(colored(f"✓ Found {len(files)} Google Docs in folder", "green"))
+            
+            if files:
+                print(colored(f"✓ Found {len(files)} Google Docs in folder", "green"))
+            else:
+                print(colored("No documents found", "yellow"))
+                
             return files
             
-        except HttpError as e:
-            print(colored(f"✗ Error listing files: {str(e)}", "red"))
-            return []
+        except Exception as e:
+            print(colored(f"✗ Error listing docs: {str(e)}", "red"))
+            return None
 
     def _clean_image_references(self, markdown_content):
         """

@@ -40,23 +40,27 @@ class SheetsOperations:
             print(colored(f"✗ Sheets authentication failed: {str(e)}", "red"))
             return False
 
-    def list_sheets_in_folder(self, folder_id):
-        """List all Google Sheets in the specified folder."""
+    def list_sheets_in_folder(self, folder_id: str):
+        """List all Google Sheets in a folder."""
         try:
-            # Use Drive API to list sheets (mimeType for Google Sheets)
-            query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet'"
+            # Query for Google Sheets in the specified folder, excluding trashed files
             results = self.drive_service.files().list(
-                q=query,
+                q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
                 fields="files(id, name, modifiedTime)"
             ).execute()
             
             files = results.get('files', [])
-            print(colored(f"✓ Found {len(files)} Google Sheets in folder", "green"))
+            
+            if files:
+                print(colored(f"✓ Found {len(files)} Google Sheets in folder", "green"))
+            else:
+                print(colored("No spreadsheets found to sync", "yellow"))
+                
             return files
             
-        except HttpError as e:
+        except Exception as e:
             print(colored(f"✗ Error listing sheets: {str(e)}", "red"))
-            return []
+            return None
 
     def export_sheet_to_csv(self, sheet_id, sheet_name):
         """Export a specific sheet to CSV format."""

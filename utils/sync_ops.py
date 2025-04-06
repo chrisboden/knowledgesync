@@ -57,12 +57,48 @@ class SyncOperations:
         """Save the sync state to file."""
         self.sync_state_file.write_text(json.dumps(sync_state, indent=2))
         
+    def _cleanup_sync_state(self):
+        """Clean up the sync state by removing entries for non-existent files."""
+        sync_state = self._load_sync_state()
+        cleaned = False
+
+        # Clean up documents
+        invalid_docs = []
+        for doc_path in sync_state["file_map"]["documents"]:
+            local_file = self.docs_dir / doc_path
+            if not local_file.exists():
+                invalid_docs.append(doc_path)
+                cleaned = True
+                print(colored(f"- Removing {doc_path} from sync state (missing locally)", "yellow"))
+
+        for doc_path in invalid_docs:
+            del sync_state["file_map"]["documents"][doc_path]
+
+        # Clean up spreadsheets
+        invalid_sheets = []
+        for sheet_path in sync_state["file_map"]["spreadsheets"]:
+            local_dir = self.sheets_dir / sheet_path
+            if not local_dir.exists() or not local_dir.is_dir():
+                invalid_sheets.append(sheet_path)
+                cleaned = True
+                print(colored(f"- Removing {sheet_path} from sync state (missing locally)", "yellow"))
+
+        for sheet_path in invalid_sheets:
+            del sync_state["file_map"]["spreadsheets"][sheet_path]
+
+        if cleaned:
+            self._save_sync_state(sync_state)
+            print(colored(f"✓ Cleaned up sync state", "green"))
+
+        return sync_state
+        
     def detect_local_changes(self):
         """
         Detect local file changes since the last sync.
         Returns a dictionary of changed files.
         """
-        sync_state = self._load_sync_state()
+        # Clean up sync state before detecting changes
+        sync_state = self._cleanup_sync_state()
         last_sync = datetime.fromisoformat(sync_state["last_sync"])
         
         changes = {
