@@ -55,12 +55,11 @@ def get_local_file_info(directory: Path, pattern: str = "*.md"):
     """Get information about existing local files."""
     local_files = {}
     for file_path in directory.glob(pattern):
-        if file_path.exists():  # Only include files that actually exist
-            mtime = datetime.fromtimestamp(
-                file_path.stat().st_mtime,
-                tz=pytz.UTC
-            )
-            local_files[file_path.stem] = mtime
+        mtime = datetime.fromtimestamp(
+            file_path.stat().st_mtime,
+            tz=pytz.UTC
+        )
+        local_files[file_path.stem] = mtime
     return local_files
 
 async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
@@ -90,10 +89,9 @@ async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
             if local_file_name not in gdrive_doc_names:
                 local_file_path = docs_dir / f"{local_file_name}.md"
                 try:
-                    if local_file_path.exists():  # Only try to remove if it exists
-                        local_file_path.unlink()
-                        print(colored(f"- Removed {local_file_name}.md (deleted from Google Drive)", "yellow"))
-                        stats['removed'] += 1
+                    local_file_path.unlink()
+                    print(colored(f"- Removed {local_file_name}.md (deleted from Google Drive)", "yellow"))
+                    stats['removed'] += 1
                 except Exception as e:
                     print(colored(f"✗ Failed to remove {local_file_name}.md: {str(e)}", "red"))
                     stats['failed'] += 1
@@ -112,17 +110,13 @@ async def sync_docs(google_drive_ops, source_folder_id: str, dest_path: Path):
                 
                 # Check if we need to update this file
                 needs_update = True
-                if base_name in local_files and local_path.exists():  # Check both dictionary and actual file
+                if base_name in local_files:
                     local_mtime = local_files[base_name]
                     doc_mtime = datetime.fromisoformat(doc['modifiedTime'].replace('Z', '+00:00'))
                     if local_mtime >= doc_mtime:
                         print(colored(f"↷ Skipping {local_filename} (up to date)", "cyan"))
                         stats['skipped'] += 1
                         needs_update = False
-                else:
-                    # File doesn't exist locally or is missing
-                    print(colored(f"+ Creating {local_filename} (missing locally)", "green"))
-                    needs_update = True
                 
                 if needs_update:
                     # Export the document to Markdown
@@ -292,7 +286,6 @@ async def main():
         parser = argparse.ArgumentParser(description='Google Workspace sync utility')
         parser.add_argument('--two-way', action='store_true', help='Enable two-way sync (push local changes to Google Drive)')
         parser.add_argument('--push-only', action='store_true', help='Only push local changes to Google Drive (no pull)')
-        parser.add_argument('--force-refresh', action='store_true', help='Force refresh of all metadata regardless of file changes')
         args = parser.parse_args()
         
         # Setup and initialize
@@ -332,11 +325,10 @@ async def main():
                 # Update metadata if needed
                 folder_base = dest_path / folder_name
                 
-                # Always update document metadata if force-refresh is set
-                if args.force_refresh or doc_updated_files or doc_stats['removed']:
+                if doc_updated_files or doc_stats['removed']:
                     print("\nUpdating document metadata...")
                     metadata_ops = DocumentMetadataOperations(folder_base / "documents")
-                    await metadata_ops.update_manifest(force=args.force_refresh)
+                    await metadata_ops.update_manifest()
                 else:
                     print(colored("\nDocument metadata is up to date", "green"))
                 
@@ -344,7 +336,6 @@ async def main():
                 spreadsheet_metadata_ops = SpreadsheetMetadataOperations(folder_base)
                 manifest_path = folder_base / "spreadsheets" / "@manifest.json"
                 needs_metadata_update = (
-                    args.force_refresh or
                     sheet_updated_files or 
                     sheet_stats['removed'] or 
                     not manifest_path.exists() or
@@ -354,7 +345,7 @@ async def main():
                 
                 if needs_metadata_update:
                     print("\nUpdating spreadsheet metadata...")
-                    await spreadsheet_metadata_ops.update_manifest(force=args.force_refresh)
+                    await spreadsheet_metadata_ops.update_manifest()
                 else:
                     print(colored("\nSpreadsheet metadata is up to date", "green"))
                 

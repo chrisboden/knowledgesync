@@ -110,7 +110,7 @@ class DocumentMetadataOperations:
                 "id": f"doc_{hash(file_path.name)}",
                 "title": file_path.stem,
                 "fileName": file_path.name,
-                "localPath": str(file_path.absolute()),  # Always use absolute path
+                "localPath": str(self.base_dir),
                 "createdAt": datetime.fromtimestamp(file_path.stat().st_ctime).isoformat(),
                 "updatedAt": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
                 "summary": "",
@@ -147,9 +147,6 @@ class DocumentMetadataOperations:
                 elif "metadata" in metadata and isinstance(metadata["metadata"], list):
                     metadata = metadata["metadata"][0]  # Handle nested metadata
                 
-                # Always ensure absolute path, regardless of what the LLM returns
-                metadata["localPath"] = str(file_path.absolute())
-                
                 # Merge with default metadata
                 default_metadata.update(metadata)
                 metadata = default_metadata
@@ -167,31 +164,19 @@ class DocumentMetadataOperations:
                 print(colored(f"Response debug info: {completion}", "yellow"))
             return None
             
-    async def update_manifest(self, force=False):
+    async def update_manifest(self):
         """Update the manifest with metadata for all files."""
         print(colored("\nUpdating document metadata...", "cyan"))
         
         md_files = list(self.base_dir.glob("*.md"))
         print(colored(f"Found {len(md_files)} markdown files", "cyan"))
         
-        # Clean up manifest entries
+        # Clean up manifest entries with incorrect double .md extensions
         cleaned_manifest = []
         for entry in self.manifest:
-            # Fix double .md extensions
             filename = entry["fileName"]
             if filename.lower().endswith('.md.md'):
                 entry["fileName"] = filename[:-3]  # Remove one .md
-            
-            # Fix incorrect localPath values
-            if entry["localPath"] in ["./", ".", "/path/to/documents", "/path/to/your/documents"] or not entry["localPath"].startswith("/"):
-                # Find the actual file in md_files
-                matching_file = next(
-                    (f for f in md_files if f.name == entry["fileName"]),
-                    None
-                )
-                if matching_file:
-                    entry["localPath"] = str(matching_file.absolute())
-            
             cleaned_manifest.append(entry)
         self.manifest = cleaned_manifest
         
@@ -202,62 +187,97 @@ class DocumentMetadataOperations:
         for file_path in md_files:
             current_hash = self._get_file_hash(file_path)
             
-            # Find existing entry
+            # Find existing entry in manifest
             existing_entry = next(
-                (entry for entry in self.manifest if entry["fileName"] == file_path.name),
+                (item for item in self.manifest if item["fileName"] == file_path.name),
                 None
             )
             
-            # Process file if:
-            # 1. Force refresh is enabled, OR
-            # 2. No existing entry exists, OR
-            # 3. Content has changed (different hash)
-            if force or not existing_entry or ("contentHash" not in existing_entry) or (existing_entry["contentHash"] != current_hash):
-                files_to_process.append(file_path)
-                tasks.append(self.extract_metadata(file_path))
+            needs_metadata = False
+            
+            if not existing_entry:
+                # New file, needs metadata
+                print(colored(f"+ New file detected: {file_path.name}", "green"))
+                needs_metadata = True
             else:
-                print(colored(f"↷ Skipping {file_path.name} (content unchanged)", "cyan"))
-                stats["skipped"] += 1
+                # Check if existing entry has metadata and content hash
+                has_metadata = all(key in existing_entry for key in ["summary", "primaryTopics", "documentSections"])
+                stored_hash = existing_entry.get("contentHash")
                 
+                if not has_metadata:
+                    print(colored(f"⟳ Missing metadata for {file_path.name}", "yellow"))
+                    needs_metadata = True
+                elif not stored_hash:
+                    print(colored(f"⟳ Missing content hash for {file_path.name}", "yellow"))
+                    needs_metadata = True
+                elif stored_hash != current_hash:
+                    print(colored(f"⟳ Content changed: {file_path.name}", "yellow"))
+                    print(colored(f"   Previous hash: {stored_hash}", "yellow"))
+                    print(colored(f"   Current hash: {current_hash}", "yellow"))
+                    needs_metadata = True
+                else:
+                    print(colored(f"↷ Skipping metadata for {file_path.name} (content unchanged)", "cyan"))
+                    stats["skipped"] += 1
+            
+            if needs_metadata:
+                tasks.append(self.extract_metadata(file_path))
+                files_to_process.append((file_path, current_hash))
+        
+        # Process files in parallel if there are any that need updating
         if tasks:
-            # Process files in parallel
             results = await asyncio.gather(*tasks)
             
-            # Update manifest with results
-            for file_path, metadata in zip(files_to_process, results):
+            # Process results and update manifest
+            for i, metadata in enumerate(results):
+                file_path, current_hash = files_to_process[i]
                 if metadata:
-                    # Add content hash
-                    metadata["contentHash"] = self._get_file_hash(file_path)
+                    # Add content hash to metadata
+                    metadata["contentHash"] = current_hash
                     
-                    # Update or add to manifest
-                    existing_idx = next(
-                        (i for i, entry in enumerate(self.manifest) if entry["fileName"] == file_path.name),
+                    # Update timestamps
+                    for ts_field in ["createdAt", "updatedAt"]:
+                        if ts_field in metadata:
+                            try:
+                                ts = datetime.fromisoformat(metadata[ts_field])
+                                if not ts.tzinfo:
+                                    ts = ts.replace(tzinfo=pytz.UTC)
+                                metadata[ts_field] = ts.isoformat()
+                            except (ValueError, TypeError):
+                                metadata[ts_field] = datetime.now(pytz.UTC).isoformat()
+                    
+                    existing_entry = next(
+                        (item for item in self.manifest if item["fileName"] == file_path.name),
                         None
                     )
                     
-                    if existing_idx is not None:
-                        self.manifest[existing_idx] = metadata
+                    if existing_entry:
+                        # Update existing entry
+                        self.manifest = [
+                            metadata if item["fileName"] == file_path.name else item
+                            for item in self.manifest
+                        ]
                         print(colored(f"↻ Updated metadata for {file_path.name}", "green"))
                         stats["updated"] += 1
                     else:
+                        # Add new entry
                         self.manifest.append(metadata)
                         print(colored(f"+ Added metadata for {file_path.name}", "green"))
                         stats["added"] += 1
+                    
+                    # Save manifest after each successful update
+                    self._save_manifest()
                 else:
                     print(colored(f"✗ Failed to extract metadata for {file_path.name}", "red"))
                     stats["failed"] += 1
-                    
-            # Save updated manifest
-            self._save_manifest()
-            
+        
         # Print summary
         print("\nMetadata Update Summary:")
-        print(f"Added: {stats['added']}")
-        print(f"Updated: {stats['updated']}")
-        print(f"Skipped: {stats['skipped']}")
-        print(f"Failed: {stats['failed']}")
+        print(colored(f"Added: {stats['added']}", "green"))
+        print(colored(f"Updated: {stats['updated']}", "green"))
+        print(colored(f"Skipped: {stats['skipped']}", "cyan"))
+        print(colored(f"Failed: {stats['failed']}", "red"))
         
-        return stats
+        return stats 
 
     def _cleanup_double_extensions(self):
         """Clean up any files with double .md extensions."""

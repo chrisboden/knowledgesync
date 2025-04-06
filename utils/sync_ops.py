@@ -10,6 +10,7 @@ import pytz
 from termcolor import colored
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
+import re
 
 class SyncOperations:
     def __init__(self, base_dir: str, folder_name: str = None):
@@ -57,48 +58,12 @@ class SyncOperations:
         """Save the sync state to file."""
         self.sync_state_file.write_text(json.dumps(sync_state, indent=2))
         
-    def _cleanup_sync_state(self):
-        """Clean up the sync state by removing entries for non-existent files."""
-        sync_state = self._load_sync_state()
-        cleaned = False
-
-        # Clean up documents
-        invalid_docs = []
-        for doc_path in sync_state["file_map"]["documents"]:
-            local_file = self.docs_dir / doc_path
-            if not local_file.exists():
-                invalid_docs.append(doc_path)
-                cleaned = True
-                print(colored(f"- Removing {doc_path} from sync state (missing locally)", "yellow"))
-
-        for doc_path in invalid_docs:
-            del sync_state["file_map"]["documents"][doc_path]
-
-        # Clean up spreadsheets
-        invalid_sheets = []
-        for sheet_path in sync_state["file_map"]["spreadsheets"]:
-            local_dir = self.sheets_dir / sheet_path
-            if not local_dir.exists() or not local_dir.is_dir():
-                invalid_sheets.append(sheet_path)
-                cleaned = True
-                print(colored(f"- Removing {sheet_path} from sync state (missing locally)", "yellow"))
-
-        for sheet_path in invalid_sheets:
-            del sync_state["file_map"]["spreadsheets"][sheet_path]
-
-        if cleaned:
-            self._save_sync_state(sync_state)
-            print(colored(f"✓ Cleaned up sync state", "green"))
-
-        return sync_state
-        
     def detect_local_changes(self):
         """
         Detect local file changes since the last sync.
         Returns a dictionary of changed files.
         """
-        # Clean up sync state before detecting changes
-        sync_state = self._cleanup_sync_state()
+        sync_state = self._load_sync_state()
         last_sync = datetime.fromisoformat(sync_state["last_sync"])
         
         changes = {
@@ -593,6 +558,76 @@ class SyncOperations:
             print(colored(f"✗ Unexpected error creating spreadsheet: {str(e)}", "red"))
             return None
             
+    def _retry_drive_operation(self, operation, max_retries=3, initial_delay=1):
+        """
+        Retry a Drive API operation with exponential backoff.
+        
+        Args:
+            operation: Function that performs the Drive API call
+            max_retries: Maximum number of retry attempts
+            initial_delay: Initial delay in seconds between retries
+            
+        Returns:
+            The result of the operation if successful, None otherwise
+        """
+        import time
+        
+        for attempt in range(max_retries):
+            try:
+                return operation()
+            except HttpError as e:
+                if e.resp.status == 500:  # Internal Server Error
+                    delay = initial_delay * (2 ** attempt)  # Exponential backoff
+                    if attempt < max_retries - 1:  # Don't sleep on last attempt
+                        print(colored(f"Drive API error (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...", "yellow"))
+                        time.sleep(delay)
+                        continue
+                print(colored(f"Drive API error: {str(e)}", "red"))
+                return None
+            except Exception as e:
+                print(colored(f"Unexpected error: {str(e)}", "red"))
+                return None
+        return None
+
+    def _verify_file_access(self, file_id):
+        """
+        Verify that we can access a file in Drive.
+        
+        Args:
+            file_id: The Google Drive file ID to verify
+            
+        Returns:
+            bool: True if file is accessible, False otherwise
+        """
+        try:
+            self.drive_service.files().get(
+                fileId=file_id,
+                fields='id, name'
+            ).execute()
+            return True
+        except HttpError as e:
+            if e.resp.status in [403, 404]:  # Permission denied or Not found
+                print(colored(f"File {file_id} is not accessible (HTTP {e.resp.status})", "red"))
+            else:
+                print(colored(f"Error checking file access: {str(e)}", "red"))
+            return False
+        except Exception as e:
+            print(colored(f"Unexpected error checking file access: {str(e)}", "red"))
+            return False
+
+    def _clean_markdown_for_drive(self, content):
+        """
+        Clean markdown content before sending to Drive.
+        Removes image references that would cause issues.
+        """
+        # Remove image reference definitions at the end of the file
+        content = re.sub(r'\n\[image\d+\]: <image_reference_image\d+>\s*$', '', content, flags=re.MULTILINE)
+        
+        # Remove inline image references
+        content = re.sub(r'!\[\]\[image\d+\]\s*', '', content)
+        
+        return content
+
     def push_local_changes(self, folder_id: str):
         """
         Push local changes to Google Drive.
@@ -605,60 +640,150 @@ class SyncOperations:
                 "spreadsheets": {"updated": 0, "created": 0, "failed": 0}
             }
             
-        # Detect local changes
-        changes = self.detect_local_changes()
+        print(colored("\nChecking for local changes...", "cyan"))
+        
+        # Get list of docs in the Drive folder
+        def list_files():
+            return self.drive_service.files().list(
+                q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false",
+                fields="files(id, name)"
+            ).execute()
+            
+        results = self._retry_drive_operation(list_files)
+        if not results:
+            print(colored("Failed to list files in Drive folder", "red"))
+            return {
+                "documents": {"updated": 0, "created": 0, "failed": 0},
+                "spreadsheets": {"updated": 0, "created": 0, "failed": 0}
+            }
+            
+        drive_files = {f['name']: f['id'] for f in results.get('files', [])}
+        print(colored(f"Found {len(drive_files)} files in Drive folder", "cyan"))
+            
+        # Load sync state
+        sync_state = self._load_sync_state()
+        last_sync = datetime.fromisoformat(sync_state["last_sync"])
         
         stats = {
             "documents": {"updated": 0, "created": 0, "failed": 0},
             "spreadsheets": {"updated": 0, "created": 0, "failed": 0}
         }
         
-        # Process document changes
-        for md_file in changes["documents"]["modified"]:
-            if self.update_document_in_drive(md_file, folder_id):
-                stats["documents"]["updated"] += 1
-            else:
-                stats["documents"]["failed"] += 1
+        # Process each local markdown file
+        for md_file in self.docs_dir.glob("*.md"):
+            if md_file.name == "@manifest.json":
+                continue
                 
-        for md_file in changes["documents"]["new"]:
-            if self.create_document_in_drive(md_file, folder_id):
-                stats["documents"]["created"] += 1
-            else:
-                stats["documents"]["failed"] += 1
+            print(colored(f"\nProcessing {md_file.name}", "cyan"))
+            
+            # Check if file has been modified since last sync
+            file_mtime = datetime.fromtimestamp(md_file.stat().st_mtime, tz=pytz.UTC)
+            if file_mtime <= last_sync:
+                print(colored(f"Skipping {md_file.name} - no changes since last sync", "yellow"))
+                continue
                 
-        # Process spreadsheet changes
-        processed_spreadsheets = set()  # Track which spreadsheets we've processed
+            # Check if file exists in Drive
+            drive_name = md_file.stem
+            drive_id = drive_files.get(drive_name)
+            
+            if drive_id:
+                print(colored(f"Found in Drive with ID: {drive_id}", "green"))
+                
+                # Verify we can access the file
+                if not self._verify_file_access(drive_id):
+                    print(colored(f"Cannot access file {drive_id}, will try to create new", "yellow"))
+                    if self.create_document_in_drive(md_file, folder_id):
+                        stats["documents"]["created"] += 1
+                    else:
+                        stats["documents"]["failed"] += 1
+                    continue
+                
+                # Update existing file
+                try:
+                    # Read markdown content and clean it
+                    md_content = md_file.read_text(encoding='utf-8')
+                    cleaned_content = self._clean_markdown_for_drive(md_content)
+                    
+                    # Create a temporary file with the cleaned content
+                    temp_file = Path(f"{md_file}.temp")
+                    temp_file.write_text(cleaned_content, encoding='utf-8')
+                    
+                    try:
+                        # Update the file's content with retry
+                        def update_file():
+                            media = MediaFileUpload(str(temp_file), mimetype='text/markdown')
+                            return self.drive_service.files().update(
+                                fileId=drive_id,
+                                media_body=media,
+                                fields='id'
+                            ).execute()
+                            
+                        if self._retry_drive_operation(update_file):
+                            # Update sync state with the file ID
+                            rel_path = str(md_file.relative_to(self.docs_dir))
+                            sync_state["file_map"]["documents"][rel_path] = drive_id
+                            
+                            print(colored(f"↻ Updated {md_file.name} in Google Drive", "green"))
+                            stats["documents"]["updated"] += 1
+                        else:
+                            print(colored(f"Failed to update {md_file.name} after retries", "red"))
+                            stats["documents"]["failed"] += 1
+                    finally:
+                        # Clean up temp file
+                        if temp_file.exists():
+                            temp_file.unlink()
+                except Exception as e:
+                    print(colored(f"✗ Error updating {md_file.name}: {str(e)}", "red"))
+                    stats["documents"]["failed"] += 1
+            else:
+                print(colored(f"Not found in Drive - will create new", "yellow"))
+                # Create new file
+                if self.create_document_in_drive(md_file, folder_id):
+                    stats["documents"]["created"] += 1
+                else:
+                    stats["documents"]["failed"] += 1
+                    
+        # Process spreadsheet changes (directories containing CSV files)
+        processed_dirs = set()
         
-        # First process modified spreadsheets
-        for sheet_dir in changes["spreadsheets"]["modified"]:
-            rel_path = str(sheet_dir.relative_to(self.sheets_dir))
-            if rel_path in processed_spreadsheets:
-                print(colored(f"Skipping already processed spreadsheet: {rel_path}", "yellow"))
+        for sheet_dir in self.sheets_dir.iterdir():
+            if not sheet_dir.is_dir() or sheet_dir.name.startswith("@"):
                 continue
                 
-            processed_spreadsheets.add(rel_path)
-            
-            if self.update_spreadsheet_in_drive(sheet_dir, folder_id):
-                stats["spreadsheets"]["updated"] += 1
-            else:
-                stats["spreadsheets"]["failed"] += 1
-                
-        # Then process new spreadsheets
-        for sheet_dir in changes["spreadsheets"]["new"]:
             rel_path = str(sheet_dir.relative_to(self.sheets_dir))
-            if rel_path in processed_spreadsheets:
-                print(colored(f"Skipping already processed spreadsheet: {rel_path}", "yellow"))
+            if rel_path in processed_dirs:
                 continue
                 
-            processed_spreadsheets.add(rel_path)
+            processed_dirs.add(rel_path)
             
-            if self.create_spreadsheet_in_drive(sheet_dir, folder_id):
-                stats["spreadsheets"]["created"] += 1
+            # Check if any CSV in the directory has been modified since last sync
+            csv_files = list(sheet_dir.glob("*.csv"))
+            if csv_files:
+                newest_mtime = max(
+                    datetime.fromtimestamp(f.stat().st_mtime, tz=pytz.UTC)
+                    for f in csv_files
+                )
+                if newest_mtime <= last_sync:
+                    print(colored(f"Skipping {sheet_dir.name} - no changes since last sync", "yellow"))
+                    continue
+            
+            # Check if spreadsheet exists in sync state
+            file_id = sync_state["file_map"]["spreadsheets"].get(rel_path)
+            
+            if file_id:
+                # Update existing spreadsheet
+                if self.update_spreadsheet_in_drive(sheet_dir, folder_id):
+                    stats["spreadsheets"]["updated"] += 1
+                else:
+                    stats["spreadsheets"]["failed"] += 1
             else:
-                stats["spreadsheets"]["failed"] += 1
-                
-        # Update the last sync time
-        sync_state = self._load_sync_state()
+                # Create new spreadsheet
+                if self.create_spreadsheet_in_drive(sheet_dir, folder_id):
+                    stats["spreadsheets"]["created"] += 1
+                else:
+                    stats["spreadsheets"]["failed"] += 1
+                    
+        # Save the updated sync state
         sync_state["last_sync"] = datetime.now(pytz.UTC).isoformat()
         self._save_sync_state(sync_state)
         
